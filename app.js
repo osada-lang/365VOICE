@@ -6,7 +6,9 @@
  * 2. Pure Live Data Engine: Zero rating/score carry-overs between stores; resets automatically on store change.
  * 3. STRICT GRADED EVALUATION ENGINES:
  *    - POSTS FREQUENCY GRADED SCORE (Max 20pt): <=14 days = 20pt, 15-30 days = 10pt, >30 days = 4pt.
- *    - REVIEW REPLY RATIO GRADED SCORE (Max 5pt): 80%+ = 5pt, 1-79% = 3pt, 0% = 0pt.
+ *    - REVIEW COUNT GRADED SCORE (Max 12pt): 500+ = 12pt, 300-499 = 9pt, 100-299 = 6pt, 50-99 = 3pt, <50 = 0pt.
+ *    - REVIEW RATING GRADED SCORE (Max 3pt): 4.5+ = 3pt, 4.0-4.4 = 2pt, <4.0 = 0pt.
+ *    - REVIEW REPLY RATIO GRADED SCORE (Max 15pt): 95%+ = 15pt, 80-94% = 12pt, 50-79% = 8pt, 1-49% = 4pt, 0% = 0pt.
  *    - ATTRIBUTES GRADED SCORE (Max 4pt): 5+ items = 4pt, 1-4 items = 2pt, 0 items = 0pt.
  *    - DESCRIPTION GRADED SCORE (Max 4pt): 250+ chars = 4pt, 1-249 chars = 2pt, 0 chars = 0pt.
  * 4. STRICT AI REPORT PROMPT & STRUCTURE: Exactly 3 Sections with 3 Sub-items each (1-1 to 3-3) formatted precisely.
@@ -218,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
             "  if(totalVisibleReviews >= 3){" +
             "    replyRatio = Math.min(Math.round((totalOwnerReplies / totalVisibleReviews) * 100), 100);" +
             "    if(replyRatio >= 80){ replyStatus = 'pass'; }" +
-            "    else if(replyRatio > 0){ replyStatus = 'warn'; }" +
+            "    else if(replyRatio >= 50){ replyStatus = 'warn'; }" +
             "    else { replyStatus = 'fail'; }" +
             "  }else{" +
             "    replyStatus = 'error';" +
@@ -879,50 +881,61 @@ document.addEventListener('DOMContentLoaded', () => {
         let reviewsGained = 0;
         let reviewsPossible = 0;
         const itemsReviews = [];
-        const targetReviewCount = 50;
-
-        reviewsPossible += 15;
-        if (storeData.reviewCount >= targetReviewCount) {
-            reviewsGained += 15;
-            itemsReviews.push({ title: "クチコミ件数", status: "pass", rawText: `${storeData.reviewCount}件 (目標${targetReviewCount}件達成)` });
-        } else if (storeData.reviewCount >= 25) {
-            reviewsGained += 10;
-            itemsReviews.push({ title: "クチコミ件数", status: "warn", rawText: `${storeData.reviewCount}件 (目標${targetReviewCount}件まであと${targetReviewCount - storeData.reviewCount}件)` });
+        
+        // GRADED SCORE: Review Count (Max 12pt: 500+ = 12pt, 300-499 = 9pt, 100-299 = 6pt, 50-99 = 3pt, <50 = 0pt)
+        reviewsPossible += 12;
+        if (storeData.reviewCount >= 500) {
+            reviewsGained += 12;
+            itemsReviews.push({ title: "クチコミ件数", status: "pass", rawText: `${storeData.reviewCount}件 (目標500件達成・圧倒的な集客基盤)` });
+        } else if (storeData.reviewCount >= 300) {
+            reviewsGained += 9;
+            itemsReviews.push({ title: "クチコミ件数", status: "pass", rawText: `${storeData.reviewCount}件 (良好・さらなる獲得を推奨)` });
+        } else if (storeData.reviewCount >= 100) {
+            reviewsGained += 6;
+            itemsReviews.push({ title: "クチコミ件数", status: "warn", rawText: `${storeData.reviewCount}件 (標準的・競合優位性の確保が必要)` });
+        } else if (storeData.reviewCount >= 50) {
+            reviewsGained += 3;
+            itemsReviews.push({ title: "クチコミ件数", status: "warn", rawText: `${storeData.reviewCount}件 (不足・信頼性向上に改善が必要)` });
         } else {
-            reviewsGained += 4;
-            itemsReviews.push({ title: "クチコミ件数", status: "fail", rawText: `${storeData.reviewCount}件 (大幅不足・集客に影響あり)` });
+            itemsReviews.push({ title: "クチコミ件数", status: "fail", rawText: `${storeData.reviewCount}件 (大幅不足・集客に悪影響あり)` });
         }
 
-        reviewsPossible += 10;
+        // GRADED SCORE: Average Rating (Max 3pt: 4.5+ = 3pt, 4.0-4.4 = 2pt, <4.0 = 0pt)
+        reviewsPossible += 3;
         if (displayRating >= 4.5) {
-            reviewsGained += 10;
+            reviewsGained += 3;
             itemsReviews.push({ title: "平均評価", status: "pass", rawText: `★${displayRating.toFixed(1)} (非常に高評価)` });
         } else if (displayRating >= 4.0) {
-            reviewsGained += 7;
+            reviewsGained += 2;
             itemsReviews.push({ title: "平均評価", status: "pass", rawText: `★${displayRating.toFixed(1)} (良好)` });
         } else {
-            reviewsGained += 3;
             itemsReviews.push({ title: "平均評価", status: "warn", rawText: `★${displayRating.toFixed(1)} (目標★4.0以上・改善推奨)` });
         }
 
-        // GRADED SCORE: Review Reply Ratio (Max 5pt: 80%+ = 5pt, 1-79% = 3pt, 0% = 0pt)
-        reviewsPossible += 5;
+        // GRADED SCORE: Review Reply Ratio (Max 15pt: 95%+ = 15pt, 80-94% = 12pt, 50-79% = 8pt, 1-49% = 4pt, 0% = 0pt)
+        reviewsPossible += 15;
         let ratioVal = storeData.replyRatio;
         if (ratioVal !== undefined) {
-            if (ratioVal >= 80) {
-                reviewsGained += 5;
-                itemsReviews.push({ title: "クチコミ返信率", status: "pass", rawText: `返信率 ${ratioVal}% (高水準な返信運用中)` });
+            if (ratioVal >= 95) {
+                reviewsGained += 15;
+                itemsReviews.push({ title: "クチコミ返信率", status: "pass", rawText: `返信率 ${ratioVal}% (完璧な運用・ファン化促進中)` });
+            } else if (ratioVal >= 80) {
+                reviewsGained += 12;
+                itemsReviews.push({ title: "クチコミ返信率", status: "pass", rawText: `返信率 ${ratioVal}% (良好・全件返信を目指しましょう)` });
+            } else if (ratioVal >= 50) {
+                reviewsGained += 8;
+                itemsReviews.push({ title: "クチコミ返信率", status: "warn", rawText: `返信率 ${ratioVal}% (返信漏れあり・運用体制の再考推奨)` });
             } else if (ratioVal > 0) {
-                reviewsGained += 3;
-                itemsReviews.push({ title: "クチコミ返信率", status: "warn", rawText: `返信率 ${ratioVal}% (返信漏れあり・100%返信への改善推奨)` });
+                reviewsGained += 4;
+                itemsReviews.push({ title: "クチコミ返信率", status: "fail", rawText: `返信率 ${ratioVal}% (放置気味・早急な対応が必要)` });
             } else {
-                itemsReviews.push({ title: "クチコミ返信率", status: "fail", rawText: `返信率 0% (未返信・放置状態・全クチコミへの返信が必須)` });
+                itemsReviews.push({ title: "クチコミ返信率", status: "fail", rawText: `返信率 0% (放置状態・致命的な機会損失)` });
             }
         } else if (storeData.statusReply === 'pass') {
-            reviewsGained += 5;
+            reviewsGained += 12; // 80% equivalent
             itemsReviews.push({ title: "クチコミ返信率", status: "pass", rawText: `返信率 80%以上 (良好)` });
         } else if (storeData.statusReply === 'warn') {
-            reviewsGained += 3;
+            reviewsGained += 8; // 50% equivalent
             itemsReviews.push({ title: "クチコミ返信率", status: "warn", rawText: `返信率 一部対応 (返信漏れあり・100%返信への改善推奨)` });
         } else if (storeData.statusReply === 'fail') {
             itemsReviews.push({ title: "クチコミ返信率", status: "fail", rawText: `返信率 0% (未返信・放置状態・全クチコミへの返信が必須)` });
@@ -1026,10 +1039,26 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCheckList(listPosts, itemsPosts);
         renderActionRecommendations(basicGained, reviewsGained, photosGained, postsGained);
 
+        // Calculate gain for radar categories
+        let reviewCountGained = 0;
+        if (storeData.reviewCount >= 500) reviewCountGained = 12;
+        else if (storeData.reviewCount >= 300) reviewCountGained = 9;
+        else if (storeData.reviewCount >= 100) reviewCountGained = 6;
+        else if (storeData.reviewCount >= 50) reviewCountGained = 3;
+
+        let replyGained = 0;
+        if (ratioVal !== undefined) {
+            if (ratioVal >= 95) replyGained = 15;
+            else if (ratioVal >= 80) replyGained = 12;
+            else if (ratioVal >= 50) replyGained = 8;
+            else if (ratioVal > 0) replyGained = 4;
+        } else if (storeData.statusReply === 'pass') replyGained = 12;
+        else if (storeData.statusReply === 'warn') replyGained = 8;
+
         drawRadarChart({
             basic: (basicGained / basicPossible) * 100,
-            reviewCount: (reviewsGained / reviewsPossible) * 100,
-            rating: (displayRating / 5.0) * 100,
+            reviewCount: (reviewCountGained / 12) * 100,
+            reviewOps: (replyGained / 15) * 100,
             photo: (photosGained / photosPossible) * 100,
             post: Math.round((postsGained / postsPossible) * 100)
         });
@@ -1056,7 +1085,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderActionRecommendations(basicGained, reviewsGained, photosGained, postsGained) {
         const actions = [];
-        if (reviewsGained < 20) {
+        if (reviewsGained < 25) {
             actions.push({
                 priority: "high",
                 title: "クチコミ獲得施策＆100%返信の徹底",
@@ -1097,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const axes = [
             { name: "基本情報", val: scores.basic || 0 },
             { name: "クチコミ数", val: scores.reviewCount || 0 },
-            { name: "高評価率", val: scores.rating || 0 },
+            { name: "クチコミ運用", val: scores.reviewOps || 0 },
             { name: "写真充実", val: scores.photo || 0 },
             { name: "更新頻度", val: scores.post || 0 }
         ];
