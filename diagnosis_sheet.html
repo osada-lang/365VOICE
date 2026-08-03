@@ -6,7 +6,7 @@
   <style>
     @page {
       size: A4 landscape;
-      margin: 6mm;
+      margin: 4mm;
     }
     * {
       box-sizing: border-box;
@@ -31,13 +31,45 @@
       border-radius: 2px;
     }
     @media print {
-      body { background: none; }
-      .sheet-container {
+      html, body {
         width: 100%;
-        margin: 0;
-        padding: 0;
-        box-shadow: none;
+        height: 100%;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: none !important;
+        overflow: hidden;
       }
+      .sheet-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 2mm 4mm !important;
+        box-shadow: none !important;
+        border: none !important;
+        page-break-inside: avoid;
+        page-break-after: avoid;
+      }
+      .top-bar { margin-bottom: 4px !important; }
+      .brand-logo { height: 42px !important; }
+      .company-name { font-size: 14px !important; }
+      .badge-item { font-size: 9.5px !important; padding: 3px 8px !important; }
+      .title-banner { padding: 5px 8px !important; margin-bottom: 6px !important; }
+      .title-banner h1 { font-size: 16px !important; }
+      .title-banner p { font-size: 9.5px !important; }
+      .info-box { margin-bottom: 6px !important; padding: 3px 8px !important; }
+      .columns { gap: 8px !important; }
+      .col { gap: 6px !important; }
+      .sec-header { padding: 3px 6px !important; font-size: 10px !important; }
+      .sec-body { padding: 4px 6px !important; gap: 4px !important; }
+      .q-item { gap: 2px !important; }
+      .q-title { font-size: 10px !important; }
+      .q-options { gap: 3px 10px !important; }
+      .opt { font-size: 9.5px !important; }
+      .point-box { padding: 2px 6px !important; font-size: 9px !important; margin-top: 1px !important; }
+      .text-area-box { height: 30px !important; }
+      .footer-section { margin-top: 6px !important; padding: 6px 10px !important; }
+      .footer-right { display: none !important; }
       input[type="text"], textarea {
         border: none !important;
         border-bottom: 1px solid #000 !important;
