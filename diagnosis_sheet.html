@@ -591,8 +591,8 @@
           <div class="q-item">
             <div class="q-title"><span class="q-num">3-3</span> お客様アンケートは実施していますか？</div>
             <div class="q-options">
-              <label class="opt"><input type="radio" name="q3_3" value="yes"> 実施している（方法： <label class="opt"><input type="checkbox" value="paper"> 紙</label> <label class="opt"><input type="checkbox" value="line"> LINE</label> <label class="opt"><input type="checkbox" value="other"> その他（<input type="text" class="text-inline" style="width:30px;">）</label>）</label>
-              <label class="opt"><input type="radio" name="q3_3" value="no"> 実施していない</label>
+              <label class="opt"><input type="radio" name="q3_3" value="yes" id="q3_3_yes"> 実施している（方法： <label class="opt"><input type="checkbox" class="q3_3_sub" value="paper"> 紙</label> <label class="opt"><input type="checkbox" class="q3_3_sub" value="line"> LINE</label> <label class="opt"><input type="checkbox" class="q3_3_sub" value="other"> その他（<input type="text" class="text-inline" style="width:30px;">）</label>）</label>
+              <label class="opt"><input type="radio" name="q3_3" value="no" id="q3_3_no"> 実施していない</label>
             </div>
           </div>
 
@@ -683,6 +683,35 @@
   </div>
 
 </form>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  const radioYes = document.getElementById("q3_3_yes");
+  const radioNo = document.getElementById("q3_3_no");
+  const subCheckboxes = document.querySelectorAll(".q3_3_sub");
+
+  // 当方式（紙、LINE、その他）のいずれかにチェックが入ったら自動で「実施している」にチェック
+  subCheckboxes.forEach(function(cb) {
+    cb.addEventListener("change", function() {
+      const anyChecked = Array.from(subCheckboxes).some(c => c.checked);
+      if (anyChecked) {
+        radioYes.checked = true;
+      }
+    });
+  });
+
+  // 「実施していない」にチェックが入ったら方式のチェックを全解除
+  if (radioNo) {
+    radioNo.addEventListener("change", function() {
+      if (radioNo.checked) {
+        subCheckboxes.forEach(function(cb) {
+          cb.checked = false;
+        });
+      }
+    });
+  }
+});
+</script>
 
 </body>
 </html>
