@@ -14,11 +14,9 @@ import {
   Mail,
   RefreshCw,
   Sparkles,
-  Send,
   Check,
   Clock,
-  ArrowLeft,
-  BookOpen
+  ArrowLeft
 } from 'lucide-react';
 
 const metaEnv = (import.meta as any).env;
@@ -109,6 +107,7 @@ export default function App() {
   // Sub-actions states
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [isToggling, setIsToggling] = useState<boolean>(false);
+  const [isJumpingOut, setIsJumpingOut] = useState<boolean>(false);
   const [messageBanner, setMessageBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -124,20 +123,36 @@ export default function App() {
   const [agenciesList, setAgenciesList] = useState<ShopProfile[]>([]);
   const [isViewingShop, setIsViewingShop] = useState<boolean>(false);
   const [shopSearchQuery, setShopSearchQuery] = useState<string>('');
-  
-  // Dummy states and handlers to support the disabled reviews tab block during compilation
-  const reviews: any[] = [];
-  const editingReplyText: any = {};
-  const setEditingReplyText = (_val: any) => {};
-  const handleDeleteReview = (_id: any) => {};
-  const handleRegenerateReply = (_id: any, _dir: any) => {};
-  const handleSendApology = (_id: any) => {};
-
   const [expandedAgencies, setExpandedAgencies] = useState<{ [key: string]: boolean }>({
     '365ボイス（直営店契約）': true
   });
 
-  // Parse URL parameters for magic login token and tab redirection on mount
+  // Jump to co-developer's Reviews Dashboard via Single Sign-On (Magic Link)
+  const handleJumpToReviews = async () => {
+    if (!token) return;
+    setIsJumpingOut(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/magic-link-out`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json();
+      if (res.ok && data.redirectUrl) {
+        window.location.href = data.redirectUrl;
+      } else {
+        showBanner('error', data.error || '口コミ管理画面への移動に失敗しました。');
+      }
+    } catch (err) {
+      showBanner('error', '通信エラー：口コミ管理画面へ接続できませんでした。');
+    } finally {
+      setIsJumpingOut(false);
+    }
+  };
+
+  // Parse URL parameters for magic login token on mount
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const urlToken = urlParams.get('token');
@@ -145,7 +160,6 @@ export default function App() {
     if (urlToken) {
       localStorage.setItem('token', urlToken);
       setToken(urlToken);
-      // Clean query parameters from URL for a clean address bar
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -196,7 +210,6 @@ export default function App() {
             setToken(data.newToken);
           }
         } else {
-          // Token expired or invalid
           localStorage.removeItem('token');
           setToken(null);
         }
@@ -214,7 +227,6 @@ export default function App() {
   useEffect(() => {
     if (!currentShop) return;
 
-    // Clear previous shop data to prevent old data ghosting/badges during loading
     setDashboard(null);
     setSettings(null);
     setPhotos([]);
@@ -258,13 +270,11 @@ export default function App() {
     fetchTabData();
   }, [currentShop, activeTab]);
 
-  // Show status banner helpers
   const showBanner = (type: 'success' | 'error', text: string) => {
     setMessageBanner({ type, text });
     setTimeout(() => setMessageBanner(null), 4000);
   };
 
-  // Handle Login submission
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -296,7 +306,6 @@ export default function App() {
     }
   };
 
-  // Log out helper
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('userRole');
@@ -310,37 +319,6 @@ export default function App() {
     setShopSearchQuery('');
   };
 
-  /*
-  // Demo Fast Switcher (For easy demo purposes - switch between seeded profiles instantly)
-  const handleDemoSwitch = async (emailAddr: string) => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailAddr, password: 'password', rememberMe: true }),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        localStorage.setItem('token', data.token);
-        // Do NOT overwrite userRole here to maintain ADMIN switcher panel visibility!
-        setToken(data.token);
-        setCurrentShop(data.shop);
-        setActiveTab('dashboard');
-        showBanner('success', `「${data.shop.name}」のデモ画面に切り替えました。`);
-      }
-    } catch (err) {
-      showBanner('error', '店舗の切り替えに失敗しました。');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  */
-
-
-
-  // Simulate daily posting and rollover slide
   const handleSimulateRollover = async () => {
     if (!currentShop || !dashboard || isToggling) return;
     setIsToggling(true);
@@ -367,7 +345,6 @@ export default function App() {
     }
   };
 
-  // Clear "本日投稿済み" (-1) draft for testing
   const handleClearPublished = async () => {
     if (!currentShop || !dashboard || isToggling) return;
     if (!confirm('「本日投稿済み」カードを強制リセットして、今日最初の自動投稿テスト（Day 0の公開）を行えるようにしますか？')) return;
@@ -395,7 +372,6 @@ export default function App() {
     }
   };
 
-  // Save Settings forms (Keywords, templates, prompts)
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentShop || !settings) return;
@@ -420,7 +396,6 @@ export default function App() {
     }
   };
 
-  // Direct Image upload to Google Drive
   const handleImageUploadClick = () => {
     fileInputRef.current?.click();
   };
@@ -429,7 +404,6 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file || !currentShop) return;
 
-    // Check size limit (e.g. 5MB)
     if (file.size > 5 * 1024 * 1024) {
       showBanner('error', '画像ファイルは5MB以下にしてください。');
       return;
@@ -437,7 +411,6 @@ export default function App() {
 
     setIsUploading(true);
 
-    // Convert file to base64
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = async () => {
@@ -470,7 +443,6 @@ export default function App() {
     };
   };
 
-  // Delete image from Google Drive
   const handleDeleteImage = async (fileId: string, fileName: string) => {
     if (!currentShop) return;
     if (!confirm(`本当にこの写真「${fileName}」をストックから削除しますか？`)) return;
@@ -493,15 +465,11 @@ export default function App() {
     }
   };
 
-
-
-  // Save single draft post back to database
   const handleSaveDraft = async (dayIndex: number) => {
     if (!currentShop || !dashboard) return;
     
     setIsSavingDrafts(prev => ({ ...prev, [dayIndex]: true }));
     
-    // Update draft array with our edited text
     const updatedDrafts = dashboard.draftPosts.map((d) => {
       if (d.dayIndex === dayIndex) {
         return {
@@ -536,7 +504,6 @@ export default function App() {
     }
   };
 
-  // Regenerate single or all draft posts via Gemini API
   const handleRegenerateDraft = async (dayIndex: number, all: boolean = false) => {
     if (!currentShop || !dashboard) return;
 
@@ -560,7 +527,6 @@ export default function App() {
           draftPosts: data.drafts
         });
         
-        // Clear editing states for regenerated items
         if (all) {
           setEditingDraftText({});
           setIsEditingDraft({});
@@ -588,10 +554,6 @@ export default function App() {
     }
   };
 
-
-
-
-  // loading screens
   if (isPageLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
@@ -601,9 +563,7 @@ export default function App() {
     );
   }
 
-  // ==========================================
-  // 🔓 Login Screen UI
-  // ==========================================
+  // Login Screen UI (Testing & Backdoor)
   if (!token || !currentShop) {
     return (
       <div className="min-h-screen stripe-mesh flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -612,7 +572,7 @@ export default function App() {
             <img src="/logo_365.png" alt="365ボイス" className="h-16 w-auto object-contain drop-shadow-md" />
           </div>
           <p className="mt-2 text-xs text-indigo-100 font-bold tracking-widest uppercase opacity-90 drop-shadow-sm">
-            全自動投稿＆AI口コミ返信システム
+            全自動投稿＆Googleマップ最適化システム
           </p>
         </div>
 
@@ -694,25 +654,19 @@ export default function App() {
                 </button>
               </div>
             </form>
-
           </div>
         </div>
       </div>
     );
   }
 
-  // ==========================================
-  // 👑 Master / Agency Account Contracted Shops List Screen (ADMIN / AGENCY)
-  // ==========================================
+  // Master / Agency Account Contracted Shops List Screen
   if (token && currentShop && (userRole === 'ADMIN' || userRole === 'AGENCY') && !isViewingShop) {
-    // Group shopsList by agency name
     const groupedShops: { [agency: string]: ShopProfile[] } = {};
 
-    // For ADMIN role, pre-populate all existing agencies so they appear even if they have 0 shops
     if (userRole === 'ADMIN') {
       agenciesList.forEach((agency) => {
         const agencyName = agency.name || '不明な代理店';
-        // Only include if empty or matches search query (or if searching for shops, we still keep empty agencies)
         if (!shopSearchQuery || agencyName.toLowerCase().includes(shopSearchQuery.toLowerCase())) {
           if (!groupedShops[agencyName]) {
             groupedShops[agencyName] = [];
@@ -728,7 +682,7 @@ export default function App() {
     );
 
     filteredShops.forEach((shop) => {
-      const agency = (!shop.agency_name || shop.agency_name.trim() === '' || shop.agency_name === '365ボイス')
+      const agency = (!shop.agency_name || shop.agency_name.trim() === '' || shop.agency_name === '365MEO' || shop.agency_name === '365ボイス')
         ? '365ボイス（直営店契約）'
         : shop.agency_name;
       
@@ -738,17 +692,15 @@ export default function App() {
       groupedShops[agency].push(shop);
     });
 
-    // Sort agencies so that 365ボイス is always first
     const sortedAgencies = Object.keys(groupedShops).sort((a, b) => {
-      if (a.startsWith('365ボイス')) return -1;
-      if (b.startsWith('365ボイス')) return 1;
+      if (a.startsWith('365ボイス') || a.startsWith('365MEO')) return -1;
+      if (b.startsWith('365ボイス') || b.startsWith('365MEO')) return 1;
       return a.localeCompare(b, 'ja-JP');
     });
 
     return (
       <div className="min-h-screen stripe-mesh flex flex-col justify-start py-8 px-4 sm:px-6 lg:px-8 bg-slate-950">
         <div className="max-w-4xl w-full mx-auto space-y-6">
-          {/* Header Area */}
           <div className="flex items-center justify-between bg-white/95 border border-white/20 p-5 rounded-3xl shadow-xl">
             <div className="flex items-center gap-3">
               <img src="/logo_365.png" alt="365ボイス" className="h-9 w-auto object-contain" />
@@ -778,7 +730,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Search bar card */}
           <div className="bg-white/95 border border-white/20 rounded-3xl p-5 shadow-xl space-y-3">
             <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none">🔎 契約店舗を検索・絞り込み</h2>
             <div className="relative">
@@ -792,7 +743,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Hierarchy list */}
           <div className="space-y-4">
             {sortedAgencies.length === 0 ? (
               <div className="bg-white/95 border border-white/20 rounded-3xl py-12 px-4 text-center space-y-2 shadow-xl">
@@ -802,11 +752,10 @@ export default function App() {
             ) : (
               sortedAgencies.map((agency) => {
                 const shops = groupedShops[agency];
-                const isExpanded = expandedAgencies[agency] !== false; // default to expanded
+                const isExpanded = expandedAgencies[agency] !== false;
 
                 return (
                   <div key={agency} className="bg-white/95 border border-white/20 rounded-3xl shadow-xl overflow-hidden transition-all">
-                    {/* Agency Header row */}
                     <button
                       type="button"
                       onClick={() => setExpandedAgencies({
@@ -814,20 +763,20 @@ export default function App() {
                         [agency]: !isExpanded
                       })}
                       className={`w-full px-5 py-4 flex items-center justify-between text-left transition-colors ${
-                        agency.startsWith('365ボイス') ? 'bg-indigo-50/50' : 'bg-slate-50/50'
+                        (agency.startsWith('365ボイス') || agency.startsWith('365MEO')) ? 'bg-indigo-50/50' : 'bg-slate-50/50'
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
                         <span className={`w-2.5 h-2.5 rounded-full ${
-                          agency.startsWith('365ボイス') ? 'bg-indigo-500' : 'bg-slate-500'
+                          (agency.startsWith('365ボイス') || agency.startsWith('365MEO')) ? 'bg-indigo-500' : 'bg-slate-500'
                         }`} />
                         <h2 className={`text-xs font-black uppercase tracking-wider ${
-                          agency.startsWith('365ボイス') ? 'text-indigo-900' : 'text-slate-800'
+                          (agency.startsWith('365ボイス') || agency.startsWith('365MEO')) ? 'text-indigo-900' : 'text-slate-800'
                         }`}>
-                          {agency.startsWith('365ボイス') ? '👑 直営：365ボイス' : `🏢 代理店：${agency}`}
+                          {(agency.startsWith('365ボイス') || agency.startsWith('365MEO')) ? '👑 直営：365ボイス' : `🏢 代理店：${agency}`}
                         </h2>
                         <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                          agency.startsWith('365ボイス') ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-700'
+                          (agency.startsWith('365ボイス') || agency.startsWith('365MEO')) ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-700'
                         }`}>
                           {shops.length}店舗
                         </span>
@@ -837,7 +786,6 @@ export default function App() {
                       </span>
                     </button>
 
-                    {/* Expandable Shops List */}
                     {isExpanded && (
                       <div className="border-t border-slate-100 divide-y divide-slate-100 bg-white">
                         {shops.length === 0 ? (
@@ -883,12 +831,8 @@ export default function App() {
     );
   }
 
-  // ==========================================
-  // 📱 Admin Layout & Navigation (Mobile-first Dashboard)
-  // ==========================================
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col pb-20 sm:pb-0">
-      {/* 🧭 Global Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200/80 px-4 py-3 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2">
           <img src="/logo_365.png" alt="365ボイス" className="h-7 w-auto object-contain" />
@@ -901,14 +845,6 @@ export default function App() {
             </p>
           </div>
           <button
-            disabled
-            className="px-3 py-1.5 bg-slate-50 border border-slate-200/60 text-slate-400 rounded-xl flex items-center gap-1.5 text-xs font-black cursor-not-allowed opacity-60"
-            title="操作マニュアル（現在準備中）"
-          >
-            <BookOpen className="w-4 h-4 text-slate-400" />
-            <span className="hidden md:inline">操作マニュアル</span>
-          </button>
-          <button
             onClick={handleLogout}
             className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
             title="ログアウト"
@@ -918,7 +854,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* 📊 Message Notification Banner */}
       {messageBanner && (
         <div className={`fixed top-16 left-4 right-4 z-50 rounded-2xl border p-4 shadow-xl flex items-start gap-3 animate-bounce max-w-md mx-auto ${
           messageBanner.type === 'success'
@@ -934,11 +869,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Wrapper to handle sidebar indentation for desktop/mobile layouts */}
       <div className="flex-1 flex flex-col sm:pl-60">
-        {/* 🚀 Active Screen Container */}
         <main className="flex-1 max-w-md lg:max-w-6xl w-full mx-auto px-4 py-5 space-y-5">
-          {/* Master / Agency Account Shop back button (Mobile) */}
           {(userRole === 'ADMIN' || userRole === 'AGENCY') && isViewingShop && (
             <button
               onClick={() => {
@@ -954,7 +886,6 @@ export default function App() {
             </button>
           )}
 
-          {/* Master / Agency Account Shop Switcher (Mobile) */}
           {(userRole === 'ADMIN' || userRole === 'AGENCY') && shopsList.length > 0 && (
             <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3.5 space-y-2 shadow-sm sm:hidden no-print">
               <label className="block text-[10px] font-black text-indigo-500 uppercase tracking-widest leading-none">
@@ -994,16 +925,13 @@ export default function App() {
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:space-y-0 space-y-4 items-start">
-              {/* Left Panel: Store Info, Status, Switches */}
               <div className="lg:col-span-5 space-y-4">
-                {/* Store Title Board */}
                 <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-3">
                   <div>
                     <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">現在管理中の店舗</p>
                     <h2 className="text-xl font-black text-slate-900 leading-tight mt-0.5">{dashboard.shopName}</h2>
                   </div>
 
-                  {/* 📍 Quick Links */}
                   <div className="pt-1.5">
                     <a
                       href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(dashboard.shopName)}`}
@@ -1020,7 +948,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* CARD 1: Scheduled Post Card */}
+              {/* CARD 1: Scheduled Post Card */}
               <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <span className="text-xs font-black text-slate-800 tracking-wider flex items-center gap-1.5 uppercase">
@@ -1054,7 +982,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* CARD 3: Toggle Switch Card (Read-Only) for Auto-Post */}
+              {/* CARD 2: Toggle Switch Card for Auto-Post */}
               <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <span className="text-xs font-black text-slate-800 tracking-wider flex items-center gap-1.5 uppercase">
@@ -1077,7 +1005,6 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Read-Only Status Toggle (Changeable via Settings Tab) */}
                   <div className="flex flex-col items-end gap-1">
                     <div
                       className={`relative inline-flex h-6 w-11 shrink-0 cursor-default rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
@@ -1324,7 +1251,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* 🚨 TEST BUTTON FOR ROLL-OVER */}
                   {userRole === 'ADMIN' && dashboard.draftPosts && dashboard.draftPosts.length > 0 && (
                     <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2 mt-2">
                       <div className="flex items-center justify-between">
@@ -1380,7 +1306,6 @@ export default function App() {
         {/* 2️⃣ SCREEN: Photos (Google Drive Image Manager) */}
         {activeTab === 'photos' && (
           <div className="space-y-4">
-            {/* Header info */}
             <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-2">
               <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
                 <ImageIcon className="w-5 h-5 text-brandBlue-600" />
@@ -1391,7 +1316,6 @@ export default function App() {
                 ここから追加した写真は自動的にストックされ、MEO自動投稿のローテーションで使用されます。
               </p>
 
-              {/* Upload action box */}
               <div className="pt-3">
                 <input
                   type="file"
@@ -1417,7 +1341,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Photos Grid */}
             <div className="space-y-2.5">
               <span className="text-xs font-black text-slate-400 block uppercase tracking-wider">
                 現在のストック写真一覧 ({photos.length >= 1000 ? '1000枚 - これ以上読み込めません' : `${photos.length}枚`})
@@ -1499,7 +1422,6 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Smooth Animated Toggle */}
                 <button
                   type="button"
                   onClick={() => setSettings({ ...settings, postActive: !settings.postActive })}
@@ -1523,7 +1445,6 @@ export default function App() {
                 AI自動投稿・キーワード設定
               </h2>
 
-              {/* Daily Posting Hour Dropdown */}
               <div className="space-y-1.5 border-b border-slate-100/80 pb-4">
                 <label className="block text-[11px] font-black text-slate-400 tracking-wider uppercase">
                   毎日自動投稿の時間帯
@@ -1744,7 +1665,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Sticky Actions */}
             <div className="pt-2 no-print">
               <button
                 type="submit"
@@ -1764,312 +1684,59 @@ export default function App() {
           </form>
         )
       )}
-
-        {/* 4️⃣ SCREEN: Review Logs & AI apology list (Removed) */}
-        {false && (
-          <div className="space-y-4">
-            {/* Header info */}
-            <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-2">
-              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-brandBlue-600" />
-                口コミ・返信下書き管理
-              </h2>
-              <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
-                新着の低評価（★1・★2）は自動送信されず、AIが作成した謝罪文をこの画面で安全に編集・承認して送信できます。高評価（★3〜5）は自動ランダム返信ログが表示されます。
-              </p>
-            </div>
-
-            {/* List */}
-            <div className="space-y-3">
-              {isLoading ? (
-                <div className="bg-white border border-slate-200/80 rounded-2xl py-12 px-4 text-center space-y-3">
-                  <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mx-auto" />
-                  <p className="text-xs font-extrabold text-slate-600">Googleマイビジネスから口コミを同期中...</p>
-                </div>
-              ) : reviews.length === 0 ? (
-                <div className="bg-white border border-slate-200/80 rounded-2xl py-12 px-4 text-center space-y-2">
-                  <MessageSquare className="w-8 h-8 text-slate-300 mx-auto" />
-                  <p className="text-xs font-extrabold text-slate-700">口コミ履歴がありません</p>
-                </div>
-              ) : (
-                [...reviews]
-                  .sort((a, b) => {
-                    const aPending = !a.is_auto_replied;
-                    const bPending = !b.is_auto_replied;
-
-                    // 1. 未返信（承認待ち）の口コミを最優先で一番上に表示
-                    if (aPending && !bPending) return -1;
-                    if (!aPending && bPending) return 1;
-
-                    // 2. 両方が未返信（承認待ち）の場合：古いものほど上（昇順 / ASC）
-                    if (aPending && bPending) {
-                      return new Date(a.create_time).getTime() - new Date(b.create_time).getTime();
-                    }
-
-                    // 3. 両方が返信済みの場合：新しいものほど上（降順 / DESC）
-                    return new Date(b.create_time).getTime() - new Date(a.create_time).getTime();
-                  })
-                  .map((review: any) => {
-                    const isPendingReply = !review.is_auto_replied;
-
-                    // Sync local text input state dynamically
-                    if (isPendingReply && editingReplyText[review.review_id] === undefined) {
-                      editingReplyText[review.review_id] = review.reply_text || '';
-                    }
-
-                  return (
-                    <div
-                      key={review.id}
-                      className={`bg-white border rounded-2xl p-5 shadow-sm space-y-4 transition-all ${
-                        isPendingReply 
-                          ? (review.star_rating <= 2 ? 'border-rose-200 bg-rose-50/10' : 'border-indigo-200 bg-indigo-50/10') 
-                          : 'border-slate-200/80'
-                      }`}
-                    >
-                      {/* Customer post header */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-extrabold text-slate-900">{review.reviewer_name}様</span>
-                            <span className="text-[9px] text-slate-400 font-bold">{new Date(review.create_time).toLocaleDateString()}</span>
-                          </div>
-                          {/* Star Ratings representation */}
-                          <div className="flex items-center gap-0.5 mt-1">
-                            {[1, 2, 3, 4, 5].map((star) => (
-                              <span
-                                key={`star-${star}`}
-                                className={`text-base leading-none select-none ${
-                                  star <= review.star_rating ? 'text-amber-400' : 'text-slate-200'
-                                }`}
-                              >
-                                ★
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Status label tag and action buttons */}
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
-                            isPendingReply
-                              ? (review.is_pre_integration
-                                ? 'bg-slate-100 text-slate-700 border border-slate-300 animate-pulse'
-                                : (review.star_rating <= 2
-                                  ? 'bg-rose-100 text-rose-700 border border-rose-200 animate-pulse'
-                                  : (false
-                                    ? 'bg-amber-100 text-amber-700 border border-amber-200 animate-pulse'
-                                    : 'bg-indigo-100 text-indigo-700 border border-indigo-200 animate-pulse'
-                                  )
-                                )
-                              )
-                              : (review.is_pre_integration
-                                ? 'bg-slate-100 text-slate-500 border border-slate-200'
-                                : (review.star_rating >= 3
-                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                                )
-                              )
-                          }`}>
-                            {isPendingReply
-                              ? (review.is_pre_integration
-                                ? '導入前未返信'
-                                : (review.star_rating <= 2
-                                  ? '承認待ち (保留中)'
-                                  : (false
-                                    ? '自動送信待ち (1時間後)'
-                                    : '承認待ち (保留中)'
-                                  )
-                                )
-                              )
-                              : (review.is_pre_integration
-                                ? '導入前返信済'
-                                : (review.star_rating >= 3 ? '自動送信完了' : '手動送信完了')
-                              )
-                            }
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteReview(review.review_id)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                            title="口コミ履歴を削除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Customer Review comment */}
-                      <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3.5">
-                        <p className="text-xs font-bold text-slate-700 leading-relaxed">
-                          「{review.comment || '(本文なし。評価のみ)'}」
-                        </p>
-                      </div>
-
-                      {/* Reply Area */}
-                      {isPendingReply ? (
-                        /* Manual check + editor (AI draft) */
-                        <div className={`space-y-3.5 border-t border-dashed pt-3.5 ${
-                          review.star_rating <= 2 ? 'border-rose-200' : 'border-indigo-200'
-                        }`}>
-                          <div className={`flex items-center gap-1 text-[11px] font-black uppercase ${
-                            review.star_rating <= 2 ? 'text-rose-700' : 'text-indigo-700'
-                          }`}>
-                            <Sparkles className={`w-4 h-4 ${review.star_rating <= 2 ? 'text-rose-500 fill-rose-50' : 'text-indigo-500 fill-indigo-50'}`} />
-                            {review.star_rating <= 2 ? 'AI作成されたお詫び文下書き (編集可能)' : 'AI作成された返信文下書き (編集可能)'}
-                          </div>
-                          <textarea
-                            className={`block w-full border rounded-xl p-3.5 text-xs font-bold bg-white text-slate-800 focus:outline-none focus:ring-2 leading-relaxed min-h-[120px] ${
-                              review.star_rating <= 2 ? 'border-rose-200 focus:ring-rose-500' : 'border-indigo-200 focus:ring-indigo-500'
-                            }`}
-                            value={editingReplyText[review.review_id] || ''}
-                            onChange={(e) => {
-                              setEditingReplyText({
-                                ...editingReplyText,
-                                [review.review_id]: e.target.value
-                              });
-                            }}
-                          />
-
-                          {/* 🪄 AI Rewrite Presets and custom directive input */}
-                          <div className="flex flex-col gap-2.5 bg-slate-50 border border-slate-100 rounded-xl p-3">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
-                              <Sparkles className="w-3.5 h-3.5 text-indigo-500 fill-indigo-50" />
-                              🪄 トーンを指定してAIで書き直す
-                            </span>
-                            <div className="flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleRegenerateReply(review.review_id, review.star_rating <= 2 ? 'より丁寧でフォーマルな謝罪文にしてください。' : 'より丁寧でフォーマルな感謝・アピール返信文にしてください。')}
-                                disabled={isLoading}
-                                className="bg-white hover:bg-indigo-50 border border-slate-200 text-slate-700 text-[10px] font-bold py-1 px-2.5 rounded-lg transition-all active:scale-[0.97] flex items-center gap-1"
-                              >
-                                💼 よりフォーマル
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRegenerateReply(review.review_id, review.star_rating <= 2 ? '150文字以内の非常に簡潔なお詫び文にまとめてください。' : '150文字以内の非常に簡潔なお礼文にまとめてください。')}
-                                disabled={isLoading}
-                                className="bg-white hover:bg-indigo-50 border border-slate-200 text-slate-700 text-[10px] font-bold py-1 px-2.5 rounded-lg transition-all active:scale-[0.97] flex items-center gap-1"
-                              >
-                                ⚡ 短く簡潔に
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRegenerateReply(review.review_id, review.star_rating <= 2 ? 'お客様への真摯な謝罪に加え、今後の技術指導や接客カウンセリング教育を早急に徹底する改善姿勢を強調してください。' : '店舗のアピールポイント、温かい感謝、そして定期的なメンテナンスのご案内をアピールして書き直してください。')}
-                                disabled={isLoading}
-                                className="bg-white hover:bg-indigo-50 border border-slate-200 text-slate-700 text-[10px] font-bold py-1 px-2.5 rounded-lg transition-all active:scale-[0.97] flex items-center gap-1"
-                              >
-                                🔧 改善・魅力アピール
-                              </button>
-                            </div>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <input
-                                type="text"
-                                id={`custom-directive-${review.review_id}`}
-                                placeholder={review.star_rating <= 2 ? '例: もっと親しみやすく、技術面についてお詫びして' : '例: メニューの強みをもっと前面に出して明るくお礼して'}
-                                className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[10px] font-bold bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    const target = e.currentTarget;
-                                    if (target.value.trim() !== '') {
-                                      handleRegenerateReply(review.review_id, target.value);
-                                      target.value = '';
-                                    }
-                                  }
-                                }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const input = document.getElementById(`custom-directive-${review.review_id}`) as HTMLInputElement;
-                                  if (input && input.value.trim() !== '') {
-                                    handleRegenerateReply(review.review_id, input.value);
-                                    input.value = '';
-                                  }
-                                }}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm"
-                              >
-                                指示する
-                              </button>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleSendApology(review.review_id)}
-                            disabled={isLoading}
-                            className={`w-full text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 no-print ${
-                              review.star_rating <= 2 ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'
-                            }`}
-                          >
-                            {isLoading ? (
-                              <RefreshCw className="w-4.5 h-4.5 animate-spin" />
-                            ) : (
-                              <>
-                                <Send className="w-4 h-4" />
-                                {review.star_rating <= 2 ? 'お詫び文を承認して送信する' : '返信文を承認して送信する'}
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      ) : (
-                        /* Past complete replied logs represent */
-                        <div className="space-y-2 border-t border-slate-100 pt-3 text-[11px] leading-relaxed">
-                          <span className="font-black text-slate-400 uppercase">返信済みの文面:</span>
-                          <p className="bg-slate-50/50 border border-slate-200/40 rounded-xl p-3 font-bold text-slate-600">
-                            {review.reply_text || '未返信'}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        )}
       </main>
       </div>
 
-      {/* 📱 Mobile Sticky Navigation Bar (Mobile-first Navigation tab switcher) */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 px-4 py-2 shadow-lg flex items-center justify-around sm:hidden no-print">
+      {/* 📱 Mobile Sticky Navigation Bar */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200/80 px-3 py-2 shadow-lg flex items-center justify-around sm:hidden no-print">
         <button
           onClick={() => setActiveTab('dashboard')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all ${
-            activeTab === 'dashboard' ? 'text-brandBlue-600' : 'text-slate-400 hover:text-slate-600'
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'dashboard' ? 'text-brandBlue-600 font-black' : 'text-slate-400 hover:text-slate-600'
           }`}
         >
-          <LayoutDashboard className="w-5.5 h-5.5" />
-          <span className="text-[9px] font-bold">ホーム</span>
+          <LayoutDashboard className="w-5 h-5" />
+          <span className="text-[9px]">投稿ホーム</span>
         </button>
 
         <button
           onClick={() => setActiveTab('photos')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all ${
-            activeTab === 'photos' ? 'text-brandBlue-600' : 'text-slate-400 hover:text-slate-600'
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'photos' ? 'text-brandBlue-600 font-black' : 'text-slate-400 hover:text-slate-600'
           }`}
         >
-          <ImageIcon className="w-5.5 h-5.5" />
-          <span className="text-[9px] font-bold">写真管理</span>
+          <ImageIcon className="w-5 h-5" />
+          <span className="text-[9px]">写真管理</span>
         </button>
 
         <button
           onClick={() => setActiveTab('settings')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all ${
-            activeTab === 'settings' ? 'text-brandBlue-600' : 'text-slate-400 hover:text-slate-600'
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all ${
+            activeTab === 'settings' ? 'text-brandBlue-600 font-black' : 'text-slate-400 hover:text-slate-600'
           }`}
         >
-          <Settings className="w-5.5 h-5.5" />
-          <span className="text-[9px] font-bold">設定</span>
+          <Settings className="w-5 h-5" />
+          <span className="text-[9px]">投稿設定</span>
         </button>
 
+        <button
+          onClick={handleJumpToReviews}
+          disabled={isJumpingOut}
+          className="flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all text-indigo-600 hover:text-indigo-800"
+          title="口コミ管理画面へ戻る"
+        >
+          {isJumpingOut ? (
+            <RefreshCw className="w-5 h-5 animate-spin text-indigo-600" />
+          ) : (
+            <MessageSquare className="w-5 h-5 text-indigo-600" />
+          )}
+          <span className="text-[9px] font-bold">口コミ画面へ</span>
+        </button>
       </nav>
 
-      {/* 🖥️ Desktop sidebar or global side menu for wide monitors */}
+      {/* 🖥️ Desktop sidebar */}
       <aside className="hidden sm:flex fixed top-16 left-0 bottom-0 w-60 bg-white border-r border-slate-200/80 p-4 flex-col justify-between shadow-sm z-30 no-print">
         <div className="space-y-2">
-          {/* Master / Agency Account back button */}
           {(userRole === 'ADMIN' || userRole === 'AGENCY') && (
             <button
               onClick={() => {
@@ -2085,7 +1752,6 @@ export default function App() {
             </button>
           )}
 
-          {/* Master / Agency Account Shop Switcher (Desktop) */}
           {(userRole === 'ADMIN' || userRole === 'AGENCY') && shopsList.length > 0 && (
             <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3.5 space-y-2 mb-4 shadow-sm">
               <label className="block text-[10px] font-black text-indigo-500 uppercase tracking-widest leading-none">
@@ -2153,6 +1819,26 @@ export default function App() {
             <Settings className="w-4.5 h-4.5" />
             自動投稿＆キーワード設定
           </button>
+
+          {/* 🔗 Jump to Co-Developer's Reviews Dashboard */}
+          <div className="pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={handleJumpToReviews}
+              disabled={isJumpingOut}
+              className="w-full py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-between transition-all bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 hover:bg-indigo-100 shadow-sm group"
+            >
+              <div className="flex items-center gap-2.5">
+                <MessageSquare className="w-4.5 h-4.5 text-indigo-600" />
+                <span>口コミ管理画面へ</span>
+              </div>
+              {isJumpingOut ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+              ) : (
+                <span className="text-indigo-600 font-extrabold text-sm leading-none group-hover:translate-x-0.5 transition-transform">➔</span>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-1">

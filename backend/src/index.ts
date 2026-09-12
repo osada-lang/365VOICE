@@ -3,9 +3,9 @@ import cors from 'cors';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import stream from 'stream';
+import crypto from 'crypto';
 import { google } from 'googleapis';
 import { prisma } from './services/db';
-import Anthropic from '@anthropic-ai/sdk';
 
 // Load .env
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -63,10 +63,10 @@ interface MockFile {
 let mockDriveFiles: MockFile[] = [];
 
 // ==========================================
-// 🔓 Auth Endpoints
+// 🔓 Auth & Single Sign-On (SSO) Endpoints
 // ==========================================
 
-// POST /api/auth/login
+// POST /api/auth/login (Testing / Local dev backdoor login)
 app.post('/api/auth/login', async (req, res) => {
   const { email, password, rememberMe } = req.body;
 
@@ -79,7 +79,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'メールアドレスまたはパスワードが正しくありません。' });
     }
 
-    // In a real app we would sign a JWT. Here we return a simple simulated token.
     const token = `simulated_token_${shop.id}_${rememberMe ? 'long' : 'short'}`;
 
     return res.json({
@@ -100,7 +99,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// GET /api/auth/me (Get profile from token)
+// GET /api/auth/me (Get profile from token - Handles Magic Token SSO from co-developer's dashboard)
 app.get('/api/auth/me', async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -116,7 +115,7 @@ app.get('/api/auth/me', async (req, res) => {
     if (parts.length < 3 || parts[0] !== 'simulated' || parts[1] !== 'token') {
       return res.status(401).json({ error: '無効な認証トークンです。' });
     }
-    shopId = parts.slice(2, -1).join('_'); // Reconstruct ID if it contains underscores
+    shopId = parts.slice(2, -1).join('_');
   } else {
     // Treat as cryptographically secure one-time magic link token
     try {
@@ -194,6 +193,47 @@ function getShopIdFromToken(authHeader: string | undefined): string | null {
   return null;
 }
 
+// POST /api/auth/magic-link-out (Generate an SSO token to jump back to co-developer's Reviews Dashboard)
+app.post('/api/auth/magic-link-out', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const callerShopId = getShopIdFromToken(authHeader);
+
+  if (!callerShopId) {
+    return res.status(401).json({ error: '認証トークンが無効または見つかりません。' });
+  }
+
+  try {
+    const shop = await prisma.shop.findUnique({ where: { id: callerShopId } });
+    if (!shop) {
+      return res.status(404).json({ error: '店舗情報が見つかりませんでした。' });
+    }
+
+    // Generate random secure token
+    const token = `mlo_${crypto.randomBytes(24).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes validity
+
+    // Save to shared database MagicLinkToken table
+    await prisma.magicLinkToken.create({
+      data: {
+        token,
+        shop_id: shop.id,
+        expires_at: expiresAt,
+        is_used: false,
+      }
+    });
+
+    const baseReviewsUrl = process.env.REVIEWS_APP_URL || 'http://localhost:5173/reviews';
+    const redirectUrl = baseReviewsUrl.includes('?') 
+      ? `${baseReviewsUrl}&token=${encodeURIComponent(token)}`
+      : `${baseReviewsUrl}?token=${encodeURIComponent(token)}`;
+
+    return res.json({ success: true, token, redirectUrl });
+  } catch (err: any) {
+    console.error('❌ Failed to generate magic link out:', err);
+    return res.status(500).json({ error: '口コミ画面へのジャンプURL生成に失敗しました。' });
+  }
+});
+
 // GET /api/shops (Get list of all stores - Master / Admin / Agency access)
 app.get('/api/shops', async (req, res) => {
   const authHeader = req.headers.authorization;
@@ -213,25 +253,16 @@ app.get('/api/shops', async (req, res) => {
     }
 
     if (caller.role === 'ADMIN') {
-      // Master admin: Return all shops (with OWNER role only, exclude AGENCY role)
       const shops = await prisma.shop.findMany({
-        where: {
-          role: 'OWNER'
-        },
+        where: { role: 'OWNER' },
         orderBy: { name: 'asc' }
       });
-      
-      // Fetch all agency accounts so they can be rendered even if they have no stores
       const agencies = await prisma.shop.findMany({
-        where: {
-          role: 'AGENCY'
-        },
+        where: { role: 'AGENCY' },
         orderBy: { name: 'asc' }
       });
-      
       return res.json({ shops, agencies });
     } else if (caller.role === 'AGENCY') {
-      // Agency manager: Return only shops where agency_name matches the agency's name or its agency_name
       const agencyName = caller.agency_name || caller.name;
       const shops = await prisma.shop.findMany({
         where: {
@@ -346,10 +377,9 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
             const pubDateStr = formatter.format(new Date(publishedItem.publishedAt));
 
             if (todayDateStr !== pubDateStr) {
-              console.log(`🧹 Calendar day changed in JST! Removing previous day's posted draft (-1) from database. (Today: ${todayDateStr}, Published: ${pubDateStr})`);
+              console.log(`🧹 Calendar day changed in JST! Removing previous day's posted draft (-1) from database.`);
               draftPostsArr = draftPostsArr.filter((d: any) => d.dayIndex !== -1);
               
-              // Save cleaned array to DB
               await prisma.shopKeywords.update({
                 where: { shop_id: shopId },
                 data: {
@@ -377,14 +407,12 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
             { dayIndex: 2, title: '明後日投稿予定の下書き (Day 2)', text: day2.text, subKeywords: day2.subKeywords, imageFileId: day2.imageFileId || null },
           ];
 
-          // Save to database
           await prisma.shopKeywords.update({
             where: { shop_id: shopId },
             data: { draft_posts: JSON.stringify(draftPostsArr) },
           });
         } catch (genError) {
           console.error('❌ Failed to first-time generate drafts:', genError);
-          // Fallback static drafts to avoid crashing Dashboard load
           draftPostsArr = [
             { dayIndex: 0, title: '今日投稿予定の下書き (Day 0)', text: `${shop.name}の本日のおしらせ下書きです。`, subKeywords: [] },
             { dayIndex: 1, title: '明日投稿予定の下書き (Day 1)', text: `${shop.name}の明日のおしらせ下書きです。`, subKeywords: [] },
@@ -394,7 +422,6 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
       }
     }
 
-    // Resolve draft posts strictly using database-stored image assignments
     const resolvedDrafts = draftPostsArr.map((d: any) => {
       return {
         ...d,
@@ -402,11 +429,9 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
       };
     });
 
-    // Find the image for today's scheduled post (dayIndex === 0)
     const day0Draft = resolvedDrafts.find((d: any) => d.dayIndex === 0);
     const day0ImageFileId = day0Draft ? day0Draft.imageFileId : null;
 
-    // Dynamic preview image pointing to our proxy stream endpoint!
     const previewImage = day0ImageFileId
       ? `/api/shops/${shopId}/drive-images/${day0ImageFileId}/view`
       : (firstFileId ? `/api/shops/${shopId}/drive-images/${firstFileId}/view` : null);
@@ -495,7 +520,6 @@ app.post('/api/shops/:shopId/settings', async (req, res) => {
   const { postActive, keywords } = req.body;
 
   try {
-    // 1. Update Shop Profile details
     await prisma.shop.update({
       where: { id: shopId },
       data: {
@@ -503,7 +527,6 @@ app.post('/api/shops/:shopId/settings', async (req, res) => {
       }
     });
 
-    // 2. Update/Upsert Keywords
     if (keywords) {
       const mainKeywordsStr = JSON.stringify(keywords.mainKeywords || []);
       const subKeywordsStr = JSON.stringify(keywords.subKeywords || []);
@@ -563,7 +586,6 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
       return res.status(404).json({ error: '店舗が見つかりませんでした。' });
     }
 
-    // If Google Drive API is not active, return the mock files list
     if (!auth) {
       console.log('ℹ️ Google Drive Credentials not configured. Returning local mock image list.');
       return res.json({ files: mockDriveFiles, isMock: true });
@@ -595,8 +617,6 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
   } catch (error: any) {
     console.error('❌ Failed to fetch Google Drive files:', error.message || error);
     
-    // If we have Google Drive Auth but the list failed, do NOT fallback to mock silently.
-    // Return a clear, helpful error message to the user!
     if (auth && shop) {
       const folderId = shop.google_drive_folder_id || 'root';
       const errorMsg = error.message || '';
@@ -607,7 +627,7 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
       if (isFolderError) {
         clientError = `Googleドライブのフォルダが見つかりません。設定タブの「Google Drive フォルダID」（現在: "${folderId}"）が正しいか、またはフォルダがGoogleドライブのゴミ箱に削除されていないかご確認ください。`;
       } else if (isPermissionError) {
-        clientError = `Googleドライブのフォルダ（ID: "${folderId}"）への読み込み権限がありません。Google Cloud of the hood, 閲覧権限をご確認ください。`;
+        clientError = `Googleドライブのフォルダ（ID: "${folderId}"）への読み込み権限がありません。Google Cloudのサービスアカウント、または認証アカウントに「共同編集者（編集者または閲覧者）」権限がお目当てのフォルダに付与されているかご確認ください。`;
       } else {
         clientError += ` (エラー詳細: ${errorMsg})`;
       }
@@ -615,7 +635,6 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
       return res.status(error.status || error.code || 400).json({ error: clientError });
     }
 
-    // Graceful fallback to mock images only if Google Drive is not configured
     return res.json({ files: mockDriveFiles, isMock: true, error: 'Google Drive接続エラーのため、モック画像を表示しています。' });
   }
 });
@@ -625,7 +644,6 @@ app.get('/api/shops/:shopId/drive-images/:fileId/view', async (req, res) => {
   const { shopId, fileId } = req.params;
 
   try {
-    // If it's a mock file, return its data or a beautiful placeholder
     if (fileId.startsWith('mock-img-')) {
       const mockFile = mockDriveFiles.find(f => f.id === fileId);
       if (mockFile && mockFile.dataUrl) {
@@ -635,7 +653,6 @@ app.get('/api/shops/:shopId/drive-images/:fileId/view', async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=86400');
         return res.send(buffer);
       }
-      // Fallback to a high-quality stock photo if no dataUrl
       return res.redirect('https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&q=80&w=600');
     }
 
@@ -647,16 +664,14 @@ app.get('/api/shops/:shopId/drive-images/:fileId/view', async (req, res) => {
 
     const drive = google.drive({ version: 'v3', auth });
 
-    // 1. Fetch metadata first to get exact mimeType
     const metadata = await drive.files.get({
       fileId,
       fields: 'mimeType',
     });
 
     res.setHeader('Content-Type', metadata.data.mimeType || 'image/jpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+    res.setHeader('Cache-Control', 'public, max-age=86400');
 
-    // 2. Fetch the actual media content stream and pipe directly to Express response
     const fileRes = await drive.files.get({
       fileId,
       alt: 'media',
@@ -665,7 +680,6 @@ app.get('/api/shops/:shopId/drive-images/:fileId/view', async (req, res) => {
     fileRes.data.pipe(res);
   } catch (error: any) {
     console.error(`❌ Failed to stream Google Drive image ${fileId}:`, error.message || error);
-    // Graceful redirect so the client UI never shows broken image icons
     return res.redirect('https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&q=80&w=600');
   }
 });
@@ -689,10 +703,8 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
       return res.status(404).json({ error: '店舗が見つかりませんでした。' });
     }
 
-    // Safe base64 binary decoding
     const fileBuffer = Buffer.from(base64Data, 'base64');
 
-    // STRICT VALIDATION: GBP only supports JPEG and PNG formats.
     const lowerMime = mimeType.toLowerCase();
     const lowerName = fileName.toLowerCase();
     const isJpg = lowerMime === 'image/jpeg' || lowerMime === 'image/jpg' || lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg');
@@ -704,7 +716,6 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
       });
     }
 
-    // STRICT VALIDATION: GMB has a file size limit of 5MB
     const maxBytes = 5 * 1024 * 1024; // 5MB
     if (fileBuffer.length > maxBytes) {
       return res.status(400).json({
@@ -713,7 +724,6 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
     }
 
     if (!auth) {
-      // Simulate mock upload
       const dataUrl = `data:${mimeType};base64,${base64Data}`;
       const newMockFile: MockFile = {
         id: `mock-img-${Date.now()}`,
@@ -731,7 +741,6 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
     const drive = google.drive({ version: 'v3', auth });
     const folderId = shop.google_drive_folder_id || 'root';
 
-    // Upload Stream
     const bufferStream = new stream.PassThrough();
     bufferStream.end(fileBuffer);
 
@@ -767,8 +776,6 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
   } catch (error: any) {
     console.error('❌ Image upload error:', error.message || error);
     
-    // If we have Google Drive Auth but the upload failed, do NOT fallback to mock silently.
-    // Return a clear, helpful error message to the user!
     if (auth && shop) {
       const folderId = shop.google_drive_folder_id || 'root';
       const errorMsg = error.message || '';
@@ -787,7 +794,6 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
       return res.status(error.status || error.code || 400).json({ error: clientError });
     }
 
-    // Only if we don't have Google Drive credentials at all, do we do the mock fallback
     try {
       const fileBuffer = Buffer.from(base64Data, 'base64');
       const dataUrl = `data:${mimeType};base64,${base64Data}`;
@@ -800,7 +806,6 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
         dataUrl,
       };
       mockDriveFiles.unshift(newMockFile);
-      console.log(`🟢 [モックアップロード成功（フォールバック）] ${fileName} がストックに追加されました。`);
       return res.json({
         success: true,
         file: newMockFile,
@@ -826,7 +831,6 @@ app.delete('/api/shops/:shopId/drive-images/:fileId', async (req, res) => {
     }
 
     if (!auth || fileId.startsWith('mock-')) {
-      // Simulate mock deletion
       mockDriveFiles = mockDriveFiles.filter((f) => f.id !== fileId);
       console.log(`🟢 [モック削除成功] ID: ${fileId} がストックから削除されました。`);
       return res.json({ success: true, fileId, isMock: true });
@@ -847,7 +851,7 @@ app.delete('/api/shops/:shopId/drive-images/:fileId', async (req, res) => {
   }
 });
 
-// Helper to generate a single day's MEO draft post using Gemini AI
+// Helper to generate a single day's MEO draft post using Google Gemini AI
 export async function generateSingleDraft(
   shop: any,
   dayIndex: number,
@@ -866,60 +870,57 @@ export async function generateSingleDraft(
   const isAlternating = imageCount >= 1 && imageCount < 10;
   const shouldBeTextOnly = forceTextOnly || (isAlternating && dayIndex % 2 === 1);
 
-  // Pick a random image from driveFiles if available and not text-only (independent of text generation)
   if (driveFiles && driveFiles.length > 0 && !shouldBeTextOnly) {
     const randomIndex = Math.floor(Math.random() * driveFiles.length);
     const selectedFile = driveFiles[randomIndex];
     imageFileId = selectedFile.id || null;
   }
 
-  // Standard randomized sub-keyword selection (independent of image files)
   if (subKeywords.length > 0) {
     const shuffled = [...subKeywords].sort(() => 0.5 - Math.random());
     const count = Math.floor(Math.random() * 2) + 2; // 2 or 3
     selectedSubKeywords.push(...shuffled.slice(0, Math.min(count, shuffled.length)));
   }
 
-  const claudeApiKey = process.env.CLAUDE_API_KEY;
-  if (!claudeApiKey) {
-    throw new Error('Claude APIキーが設定されていません。');
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  if (!geminiApiKey) {
+    throw new Error('Gemini APIキーが設定されていません。');
   }
 
-  const anthropic = new Anthropic({
-    apiKey: claudeApiKey,
-  });
+  const { GoogleGenerativeAI } = require('@google/generative-ai');
+  const genAI = new GoogleGenerativeAI(geminiApiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
   // 日替わりで異なる「検索意図・文脈テーマ」を決定 (dayIndexを利用)
   const themes = [
     {
       name: "悩み解決型 (Trouble Resolution)",
-      focus: "ターゲット層特有の具体的なお悩みやニーズを切り口にし、どのようなアプローチでそれを解決に導くのかを語る構成。"
+      focus: "ターゲット層特有の具体的かつ代表的なお悩み（例：集客、美容、サービス選び、各種不便など、その店舗が解決できるお悩みや課題）を切り口にし、どのようなアプローチでそれを根本からケア・解決・サポートしていくのかを詳しく語る構成。"
     },
     {
-      name: "サービス詳細紹介型 (Service Highlight)",
-      focus: "店舗が提供する特定のメインサービス、主力メニュー、または特筆すべき強みについて、その特徴や得られるメリットを深く解説する構成。"
+      name: "サービス詳細紹介型 (Service / Menu Highlight)",
+      focus: "特定の提供サービス、おすすめのメニュー、または主力商品について、その特徴、得られる効果、なぜそれが必要・おすすめなのかを専門的な事実を交えて深く解説する構成。"
     },
     {
       name: "利用シーン・シチュエーション型 (Situation & Context)",
-      focus: "具体的な利用・来店シチュエーションに焦点を当て、店舗の利便性や魅力、どのような場面で選ばれるのかをアピールする構成。"
+      focus: "「〇〇な時に利用したい」「忙しい合間にリフレッシュしたい」「特別な日に利用したい」といった、具体的で魅力的な利用・来店シチュエーションに焦点を当て、店舗の利便性や環境、通いやすさをアピールする構成。"
     },
     {
-      name: "よくある質問回答型 (FAQ / Q&A)",
-      focus: "お客様やユーザーからよく受ける代表的な疑問や質問に対する、具体的で分かりやすい解説を提示する構成。"
+      name: "よくある質問回答型 (FAQ / Q&A answering)",
+      focus: "お客様からよく受ける代表的な疑問や質問（例：料金や利用の流れ、効果、準備するものなど）に対する、具体的で分かりやすい解説を提示して不安を解消する構成。"
     },
     {
       name: "選ばれる理由・こだわり提示型 (Unique Selling Proposition)",
-      focus: "他店との圧倒的な違い、こだわり（カウンセリング、素材、技術、専門知識、誠実な姿勢など）について客観的に解説する構成。"
+      focus: "他店との違い、店舗独自の強みやこだわり（例：丁寧なカウンセリング、専門知識、独自の技術・こだわり素材、アフターフォローなど）について客観的な事実に基づいて解説する構成。"
     },
     {
       name: "特定ターゲット特化アピール型 (Target Audience Appeal)",
-      focus: "特定のターゲット層（例：忙しいビジネスパーソン、初めて店舗を利用される方など、ターゲット設定に合わせた層）に対して、店舗を利用する具体的なメリットを語る構成。"
+      focus: "「特定の目的を持つ方」「特定のお悩みを持つお客様」など、ターゲットを具体的に絞り込み、その層が店舗を利用することで得られるメリットや価値を具体的に語る構成。"
     }
   ];
 
   const selectedTheme = themes[dayIndex % themes.length];
 
-  // Get current date context in Japanese to naturally incorporate seasonal topics
   const todayJp = new Date().toLocaleDateString('ja-JP', {
     year: 'numeric',
     month: 'long',
@@ -984,21 +985,20 @@ export async function generateSingleDraft(
 
   let generatedText = '';
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-5',
-      max_tokens: 600,
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    generatedText = response.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('\n')
-      .trim()
-      .replace(/```/g, '');
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    generatedText = response.text().trim().replace(/```/g, '');
   } catch (err: any) {
-    console.error('❌ Claude generation failed in generateSingleDraft:', err.message || err);
-    throw err;
+    console.warn('⚠️ gemini-3.6-flash failed or was under heavy load. Falling back to stable gemini-3.5-flash:', err.message || err);
+    try {
+      const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
+      const result = await fallbackModel.generateContent(prompt);
+      const response = await result.response;
+      generatedText = response.text().trim().replace(/```/g, '');
+    } catch (fallbackErr: any) {
+      console.error('❌ Both gemini-3.6-flash and gemini-3.5-flash failed:', fallbackErr.message || fallbackErr);
+      throw fallbackErr;
+    }
   }
 
   return {
@@ -1009,10 +1009,9 @@ export async function generateSingleDraft(
 }
 
 // POST /api/shops/:shopId/draft-posts
-// Save edited drafts back to database
 app.post('/api/shops/:shopId/draft-posts', async (req, res) => {
   const { shopId } = req.params;
-  const { drafts } = req.body; // Expect array of 3 draft objects
+  const { drafts } = req.body;
 
   try {
     await prisma.shopKeywords.update({
@@ -1030,10 +1029,9 @@ app.post('/api/shops/:shopId/draft-posts', async (req, res) => {
 });
 
 // POST /api/shops/:shopId/draft-posts/regenerate
-// Regenerate specific day's draft or all three drafts using Gemini AI
 app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
   const { shopId } = req.params;
-  const { dayIndex, all } = req.body; // Expect dayIndex (0,1,2) or all (boolean)
+  const { dayIndex, all } = req.body;
 
   if (!all && typeof dayIndex === 'number' && dayIndex === -1) {
     return res.status(400).json({ error: '投稿済みの下書きは再作成できません。' });
@@ -1054,7 +1052,6 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
       draftPostsArr = JSON.parse(shop.keywords.draft_posts);
     }
 
-    // Fetch Drive files for image matching
     let driveFilesList: any[] = [];
     const auth = getGoogleAuthClient();
     if (auth && shop.google_drive_folder_id) {
@@ -1074,7 +1071,6 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
     }
 
     if (all) {
-      // Regenerate all 3 days
       const day0 = await generateSingleDraft(shop, 0, driveFilesList);
       const day1 = await generateSingleDraft(shop, 1, driveFilesList);
       const day2 = await generateSingleDraft(shop, 2, driveFilesList);
@@ -1085,7 +1081,6 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
         { dayIndex: 2, title: '明後日投稿予定の下書き (Day 2)', text: day2.text, subKeywords: day2.subKeywords, imageFileId: day2.imageFileId || null },
       ];
 
-      // Keep dayIndex: -1 if it exists
       const publishedItem = draftPostsArr.find((d: any) => d.dayIndex === -1);
       if (publishedItem) {
         draftPostsArr = [publishedItem, ...nextDrafts];
@@ -1093,7 +1088,6 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
         draftPostsArr = nextDrafts;
       }
     } else {
-      // Regenerate single day's draft
       const targetIndex = typeof dayIndex === 'number' ? dayIndex : 0;
       const regenerated = await generateSingleDraft(shop, targetIndex, driveFilesList);
 
@@ -1103,7 +1097,6 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
         '明後日投稿予定の下書き (Day 2)'
       ];
 
-      // Replace or insert
       const existingIdx = draftPostsArr.findIndex((d: any) => d.dayIndex === targetIndex);
       const draftObj = {
         dayIndex: targetIndex,
@@ -1120,10 +1113,8 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
       }
     }
 
-    // Sort to ensure correct order
     draftPostsArr.sort((a: any, b: any) => a.dayIndex - b.dayIndex);
 
-    // Save to database
     await prisma.shopKeywords.update({
       where: { shop_id: shopId },
       data: {
@@ -1139,7 +1130,6 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
 });
 
 // POST /api/shops/:shopId/draft-posts/clear-published
-// Manual cleanup route to clear "本日投稿済み" (-1) draft for testing
 app.post('/api/shops/:shopId/draft-posts/clear-published', async (req, res) => {
   const { shopId } = req.params;
   try {
@@ -1186,17 +1176,14 @@ async function executeDailyPostRollover(shopId: string) {
     }
   }
 
-  // Filter out any existing -1 draft just in case
   const cleanDrafts = draftPostsArr.filter((d: any) => d.dayIndex !== -1);
 
   if (cleanDrafts.length === 0) {
     throw new Error('下書きが存在しないため、自動生成処理を実行できません。先にダッシュボードで初期下書きを作成してください。');
   }
 
-  // 1. The post being published today (Day 0)
   const publishedPost = cleanDrafts[0];
 
-  // Perform actual posting to Google Business Profile API if location is set and token is set
   let gbpPublished = false;
   let gbpResponse = null;
 
@@ -1222,7 +1209,6 @@ async function executeDailyPostRollover(shopId: string) {
       const oauth2Client = new google.auth.OAuth2(clientID, clientSecret, 'http://localhost');
       oauth2Client.setCredentials({ refresh_token: refreshToken });
       
-      // Determine if there is an image to attach
       let mediaPayload = undefined;
       if (publishedPost.imageFileId) {
         const apiBaseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_API_BASE_URL || 'http://localhost:3000';
@@ -1236,34 +1222,25 @@ async function executeDailyPostRollover(shopId: string) {
         ];
       }
 
-      // Append the fixed footer to the post text before publishing to GMB if configured
       let finalPostText = publishedPost.text;
       if (shop.keywords && shop.keywords.fixed_footer) {
-        // We prepend a solid visual divider line (━━━━━━━━━━━━━━━━) to structurally isolate the footer.
-        // Google's parser cannot merge symbol glyphs into standard prose, forcing a clean footer layout.
         finalPostText = `${finalPostText}\n\n━━━━━━━━━━━━━━━━\n${shop.keywords.fixed_footer}`;
       }
 
-      // 1. Normalize all line breaks to standard \n (LF)
       let normalizedText = finalPostText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-      // 2. Prevent spam filtering and layout collapse by limiting contiguous newlines to maximum of 2 (i.e. maximum 1 empty line)
       normalizedText = normalizedText.replace(/\n{3,}/g, '\n\n');
 
-      // 3. Process each line to prevent Google's Maps/Search engine from collapsing empty lines into a wall of text.
-      // We append a full-width space and a zero-width space (\u200B) to empty lines so Google's renderer sees them as active paragraphs.
       const gbpPostText = normalizedText
         .split('\n')
         .map((line: string) => {
           const trimmed = line.trim();
           if (trimmed === '') {
-            return '　\u200B'; // Full-width Japanese space + Zero-width invisible space
+            return '　\u200B';
           }
           return trimmed;
         })
-        .join('\n'); // Standard LF join
+        .join('\n');
 
-      // Determine if there is an action button (Call to Action) to attach (e.g. LP or Campaign URL)
       let callToActionPayload = undefined;
       if (shop.keywords && shop.keywords.gbp_action_url) {
         console.log(`🔗 Attaching Call-to-Action button to GBP post: ${shop.keywords.gbp_action_url}`);
@@ -1273,7 +1250,6 @@ async function executeDailyPostRollover(shopId: string) {
         };
       }
 
-      // Post to GMB v4 LocalPosts API
       const response = await oauth2Client.request({
         url: `https://mybusiness.googleapis.com/v4/${resolvedPath}/localPosts`,
         method: 'POST',
@@ -1294,7 +1270,6 @@ async function executeDailyPostRollover(shopId: string) {
     }
   }
 
-  // Fetch Drive files for image matching
   let driveFilesList: any[] = [];
   const auth = getGoogleAuthClient();
   if (auth && shop.google_drive_folder_id) {
@@ -1313,8 +1288,6 @@ async function executeDailyPostRollover(shopId: string) {
     }
   }
 
-  // 2. Perform the roll-over (Slide)
-  // Keep the published draft as dayIndex: -1 (本日投稿済み)
   const nextDayMinus1 = {
     dayIndex: -1,
     title: '本日投稿済みの下書き',
@@ -1343,12 +1316,10 @@ async function executeDailyPostRollover(shopId: string) {
     imageFileId: draft2.imageFileId || null,
   };
 
-  // Check if we are in alternating mode (1 to 9 images) to alternate Day 2 image assignment based on Day 1 (draft2) status
   const imageCount = driveFilesList.length;
   const isAlternating = imageCount >= 1 && imageCount < 10;
   const forceTextOnlyForDay2 = isAlternating ? !!draft2.imageFileId : false;
 
-  // 3. Generate a brand new Day 2 draft using Gemini AI!
   const newDay2Raw = await generateSingleDraft(shop, 2, driveFilesList, forceTextOnlyForDay2);
   const nextDay2 = {
     dayIndex: 2,
@@ -1360,7 +1331,6 @@ async function executeDailyPostRollover(shopId: string) {
 
   const newDrafts = [nextDayMinus1, nextDay0, nextDay1, nextDay2];
 
-  // Save back to database
   await prisma.shopKeywords.update({
     where: { shop_id: shopId },
     data: {
@@ -1377,10 +1347,6 @@ async function executeDailyPostRollover(shopId: string) {
 }
 
 // POST /api/shops/:shopId/batch/run-daily-post
-// Simulates or runs the daily batch rollover:
-// 1. Publishes Day 0 draft (mocked/simulated or real GBP if connected)
-// 2. Slides drafts: Day 1 -> Day 0, Day 2 -> Day 1
-// 3. Generates a new Day 2 draft using Gemini AI
 app.post('/api/shops/:shopId/batch/run-daily-post', async (req, res) => {
   const { shopId } = req.params;
 
@@ -1409,12 +1375,10 @@ app.post('/api/shops/:shopId/batch/run-daily-post', async (req, res) => {
 async function resolveGoogleLocationPath(oauth2Client: any, locationIdInput: string): Promise<string | null> {
   if (!locationIdInput) return null;
   
-  // If already starts with accounts/, return as is
   if (locationIdInput.startsWith('accounts/')) {
     return locationIdInput;
   }
 
-  // Extract pure numerical ID
   const numMatch = locationIdInput.match(/\d+/);
   if (!numMatch) return null;
   const numericalId = numMatch[0];
@@ -1427,7 +1391,6 @@ async function resolveGoogleLocationPath(oauth2Client: any, locationIdInput: str
     const accountsRes = await mybusiness.accounts.list();
     const accounts = accountsRes.data.accounts || [];
     
-    // Find first valid account/organization name
     for (const account of accounts) {
       if (account.name) {
         return `${account.name}/locations/${numericalId}`;
@@ -1439,12 +1402,6 @@ async function resolveGoogleLocationPath(oauth2Client: any, locationIdInput: str
   return null;
 }
 
-// Helper to fetch, sync, and notify about new Google Business Profile reviews in real-time (bypassed)
-async function syncReviewsFromGBP(shopId: string) {
-  return;
-}
-
-// In-memory set to prevent double posting in the same hour
 const alreadyPostedToday = new Set<string>();
 
 // ==============================================================================
@@ -1453,13 +1410,7 @@ const alreadyPostedToday = new Set<string>();
 async function runBackgroundScheduler() {
   console.log(`\n⏰ [${new Date().toLocaleTimeString()}] Running 365ボイス background scheduler cycle...`);
 
-  const clientID = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-  const googleAuthAvailable = !!(clientID && clientSecret && refreshToken);
-
   try {
-    // Only fetch OWNER shops for review sync and daily posting
     const shops = await prisma.shop.findMany({
       where: { role: 'OWNER' },
       include: { keywords: true },
@@ -1467,7 +1418,6 @@ async function runBackgroundScheduler() {
 
     const now = new Date();
     
-    // Robustly extract year, month, day, and hour in Japan Standard Time (JST) regardless of server timezone
     const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
       timeZone: 'Asia/Tokyo',
       year: 'numeric',
@@ -1485,18 +1435,15 @@ async function runBackgroundScheduler() {
     const todayStr = `${year}-${month}-${day}`;
     const currentHour = parseInt(hour || '0', 10);
 
-    // Clear alreadyPostedToday memory cache at midnight JST
     if (currentHour === 0) {
       alreadyPostedToday.clear();
       console.log('🧹 Midnight JST reached: Cleared scheduler memory set for the new day.');
     }
 
     for (const shop of shops) {
-      // 1. Check for Daily Automated Posting
       if (shop.post_active && shop.keywords) {
-        const postTimeHour = (shop.keywords as any).post_time_hour ?? 12; // Default is 12 (Noon)
+        const postTimeHour = (shop.keywords as any).post_time_hour ?? 12;
 
-        // If current hour matches the store's configured posting hour
         if (currentHour === postTimeHour) {
           const memoryKey = `${shop.id}_${todayStr}`;
           if (!alreadyPostedToday.has(memoryKey)) {
@@ -1519,7 +1466,6 @@ async function runBackgroundScheduler() {
 }
 
 // POST /api/batch/trigger-scheduler
-// Securely triggers the background scheduler cycle. Protected by CRON_SECRET API Key.
 app.post('/api/batch/trigger-scheduler', async (req, res) => {
   const authHeader = req.headers.authorization;
   const cronSecret = process.env.CRON_SECRET;
@@ -1540,7 +1486,6 @@ app.post('/api/batch/trigger-scheduler', async (req, res) => {
 
   console.log('📡 [セキュアCronリクエスト受信] バックグラウンドバッチ同期スケジュールを起動します...');
   
-  // Non-blocking asynchronous execution to prevent HTTP timeout on the caller
   runBackgroundScheduler()
     .then(() => console.log('✅ Secure background scheduler execution completed successfully.'))
     .catch((err) => console.error('❌ Secure background scheduler execution failed:', err.message || err));
@@ -1555,7 +1500,6 @@ app.listen(port, () => {
   console.log(`📅 Started on: ${new Date().toLocaleString()}`);
   console.log(`================================================================================\n`);
 
-  // ⏱️ Start Local Background Scheduler Fallback (Every 10 minutes & 15 seconds after startup)
   console.log('⏱️ [Internal Scheduler] Initializing internal fallback scheduler (10-minute intervals)...');
   setInterval(async () => {
     console.log('⏰ [Internal Scheduler] Executing automatic background sync cycle...');
