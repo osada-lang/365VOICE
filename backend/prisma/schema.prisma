@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -16,22 +13,21 @@ model Shop {
   email                  String           @unique
   password               String
   role                   String           @default("OWNER")
-  agency_name            String?          // Under which agency/franchise this shop operates
+  agency_name            String?
   google_location_id     String?
   google_drive_folder_id String?
   post_active            Boolean          @default(true)
   created_at             DateTime         @default(now())
   updated_at             DateTime         @updatedAt
-
-  keywords               ShopKeywords?
   magic_tokens           MagicLinkToken[]
+  keywords               ShopKeywords?
 }
 
 model ShopKeywords {
   id             String   @id @default(uuid())
   shop_id        String   @unique
-  main_keywords  String   // JSON-serialized string of main keywords array
-  sub_keywords   String   // JSON-serialized string of sub keywords array
+  main_keywords  String
+  sub_keywords   String
   fixed_footer   String?
   custom_prompt  String?
   hp_url         String?
@@ -39,10 +35,9 @@ model ShopKeywords {
   hotpepper_url  String?
   gurunavi_url   String?
   gbp_action_url String?
-  draft_posts    String?  // JSON-serialized string of 3 draft posts array
+  draft_posts    String?
   post_time_hour Int      @default(12)
   updated_at     DateTime @updatedAt
-
   shop           Shop     @relation(fields: [shop_id], references: [id], onDelete: Cascade)
 }
 
@@ -53,6 +48,434 @@ model MagicLinkToken {
   expires_at DateTime
   is_used    Boolean  @default(false)
   created_at DateTime @default(now())
-
   shop       Shop     @relation(fields: [shop_id], references: [id], onDelete: Cascade)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Account {
+  id                String  @id
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  User              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model AutoReplySetting {
+  id        String   @id
+  storeId   String
+  rating    Int
+  enabled   Boolean  @default(false)
+  updatedAt DateTime
+  Store     Store    @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, rating])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Customer {
+  id                    String                @id
+  lineUid               String                @unique
+  gender                String?
+  age                   String?
+  visitFrequency        String?
+  storeId               String
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime
+  lineFriendConfirmedAt DateTime?
+  Store                 Store                 @relation(fields: [storeId], references: [id])
+  LineTransitionEvent   LineTransitionEvent[]
+  LotteryEntry          LotteryEntry[]
+  Survey                Survey[]
+  SurveyInvitation      SurveyInvitation[]
+
+  @@index([storeId, createdAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model GbpPerformanceSnapshot {
+  id          String   @id
+  storeId     String
+  date        DateTime @db.Date
+  impressions Int?
+  directions  Int?
+  reviewCount Int?
+  updatedAt   DateTime
+  Store       Store    @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, date])
+}
+
+model LineTransitionEvent {
+  id         String    @id
+  storeId    String
+  surveyId   String    @unique
+  customerId String?
+  createdAt  DateTime  @default(now())
+  Customer   Customer? @relation(fields: [customerId], references: [id])
+  Store      Store     @relation(fields: [storeId], references: [id])
+  Survey     Survey    @relation(fields: [surveyId], references: [id])
+
+  @@index([storeId, createdAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model LotteryConfig {
+  id        String   @id
+  storeId   String?  @unique
+  prizes    Json
+  updatedAt DateTime
+  Store     Store?   @relation(fields: [storeId], references: [id])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model LotteryConfigHistory {
+  id              String   @id
+  storeId         String
+  prizesBefore    Json?
+  prizesAfter     Json
+  changedByUserId String?
+  changedByEmail  String?
+  changedAt       DateTime @default(now())
+  Store           Store    @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, changedAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model LotteryEntry {
+  id               String    @id
+  surveyId         String    @unique
+  customerId       String?
+  prizeRank        Int
+  prizeName        String
+  confirmedAt      DateTime  @default(now())
+  friendAddPending Boolean   @default(false)
+  pendingLineUid   String?
+  lineNotifiedAt   DateTime?
+  usedAt           DateTime?
+  couponExpiresAt  DateTime?
+  Customer         Customer? @relation(fields: [customerId], references: [id])
+  Survey           Survey    @relation(fields: [surveyId], references: [id])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model MasterGbpCredential {
+  id                 String   @id
+  googleAccountEmail String
+  accessToken        String
+  refreshToken       String
+  tokenExpiresAt     DateTime
+  connectedAt        DateTime @default(now())
+  connectedByEmail   String?
+  updatedAt          DateTime
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model OwnerLineLinkRequest {
+  id                String    @id
+  storeId           String
+  token             String    @unique
+  requestedByUserId String
+  requestedAt       DateTime  @default(now())
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  lineUid           String?
+  Store             Store     @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model PasswordResetHistory {
+  id            String   @id
+  storeId       String
+  targetUserId  String
+  targetEmail   String
+  resetByUserId String?
+  resetByEmail  String?
+  resetAt       DateTime @default(now())
+  Store         Store    @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, resetAt])
+}
+
+model PendingLineFriendConfirmation {
+  lineUid     String   @id
+  confirmedAt DateTime @default(now())
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model PendingReply {
+  id               String             @id
+  reviewId         String
+  storeId          String
+  drafts           Json
+  reason           PendingReplyReason
+  status           PendingReplyStatus @default(PENDING)
+  finalText        String?
+  notifiedAt       DateTime?
+  approvedAt       DateTime?
+  approvedByUserId String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime
+  Review           Review             @relation(fields: [reviewId], references: [id])
+  Store            Store              @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, status])
+}
+
+model PendingSurveyInvitation {
+  lineUid   String   @id
+  storeId   String
+  qrCodeId  String?
+  createdAt DateTime @default(now())
+  QRCode    QRCode?  @relation(fields: [qrCodeId], references: [id])
+  Store     Store    @relation(fields: [storeId], references: [id])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Prize {
+  id          String   @id
+  storeId     String
+  grade       Int
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  Store       Store    @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, grade])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model QRCode {
+  id                      String                    @id
+  storeId                 String
+  type                    String
+  staffName               String?
+  url                     String
+  scanCount               Int                       @default(0)
+  createdAt               DateTime                  @default(now())
+  locationName            String?
+  PendingSurveyInvitation PendingSurveyInvitation[]
+  Store                   Store                     @relation(fields: [storeId], references: [id])
+  QRScanEvent             QRScanEvent[]
+  Survey                  Survey[]
+  SurveyInvitation        SurveyInvitation[]
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model QRScanEvent {
+  id        String   @id
+  qrCodeId  String?
+  storeId   String
+  scannedAt DateTime @default(now())
+  scanToken String?  @unique
+  QRCode    QRCode?  @relation(fields: [qrCodeId], references: [id])
+  Store     Store    @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, scannedAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Review {
+  id             String            @id
+  storeId        String
+  googleReviewId String?           @unique
+  stars          Int
+  body           String?
+  authorName     String?
+  replyBody      String?
+  repliedAt      DateTime?
+  publishedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime
+  replyStatus    ReviewReplyStatus @default(NONE)
+  PendingReply   PendingReply[]
+  Store          Store             @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, publishedAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Session {
+  id           String   @id
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  User         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Store {
+  id                      String                    @id
+  storeSlug               String                    @unique
+  name                    String
+  area                    String?
+  status                  StoreStatus               @default(PENDING)
+  gbpLocationId           String?
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime
+  industry                String?
+  mainService             String?
+  gbpAccountId            String?
+  gbpConnectedAt          DateTime?
+  ownerLineUid            String?
+  gbpDirections30d        Int?
+  gbpImpressions30d       Int?
+  gbpPerformanceFetchedAt DateTime?
+  lineChannelAccessToken  String?
+  lineChannelId           String?
+  lineChannelSecret       String?
+  lineIntegrationStatus   String?
+  lineLiffId              String?
+  lineBasicId             String?
+  gbpPlaceId              String?
+  couponValidDays         Int                       @default(30)
+  surveyFlowMode          SurveyFlowMode            @default(LINE_FIRST)
+  gbpMapsUri              String?
+  AutoReplySetting        AutoReplySetting[]
+  Customer                Customer[]
+  GbpPerformanceSnapshot  GbpPerformanceSnapshot[]
+  LineTransitionEvent     LineTransitionEvent[]
+  LotteryConfig           LotteryConfig?
+  LotteryConfigHistory    LotteryConfigHistory[]
+  OwnerLineLinkRequest    OwnerLineLinkRequest[]
+  PasswordResetHistory    PasswordResetHistory[]
+  PendingReply            PendingReply[]
+  PendingSurveyInvitation PendingSurveyInvitation[]
+  Prize                   Prize[]
+  QRCode                  QRCode[]
+  QRScanEvent             QRScanEvent[]
+  Review                  Review[]
+  Survey                  Survey[]
+  SurveyConfig            SurveyConfig?
+  SurveyInvitation        SurveyInvitation[]
+  User                    User[]
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model Survey {
+  id                      String               @id
+  storeId                 String
+  customerId              String?
+  answers                 Json
+  freeText                String?
+  keywords                String[]
+  createdAt               DateTime             @default(now())
+  satisfactionScore       Int?
+  qrCodeId                String?
+  reviewPosted            Boolean              @default(false)
+  initialFriendshipStatus Boolean?
+  reviewDrafts            Json?
+  reviewFlowCompletedAt   DateTime?
+  LineTransitionEvent     LineTransitionEvent?
+  LotteryEntry            LotteryEntry?
+  Customer                Customer?            @relation(fields: [customerId], references: [id])
+  QRCode                  QRCode?              @relation(fields: [qrCodeId], references: [id])
+  Store                   Store                @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, createdAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model SurveyConfig {
+  id        String   @id
+  storeId   String?  @unique
+  questions Json
+  updatedAt DateTime
+  q7Label   String?
+  Store     Store?   @relation(fields: [storeId], references: [id])
+}
+
+model SurveyInvitation {
+  id         String    @id
+  storeId    String
+  qrCodeId   String?
+  customerId String
+  token      String    @unique
+  createdAt  DateTime  @default(now())
+  sentAt     DateTime?
+  consumedAt DateTime?
+  Customer   Customer  @relation(fields: [customerId], references: [id])
+  QRCode     QRCode?   @relation(fields: [qrCodeId], references: [id])
+  Store      Store     @relation(fields: [storeId], references: [id])
+
+  @@index([customerId, consumedAt])
+  @@index([storeId, createdAt])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model User {
+  id             String    @id
+  name           String?
+  email          String    @unique
+  emailVerified  DateTime?
+  image          String?
+  passwordHash   String?
+  role           Role      @default(STORE_OWNER)
+  storeId        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime
+  sessionVersion Int       @default(0)
+  Account        Account[]
+  Session        Session[]
+  Store          Store?    @relation(fields: [storeId], references: [id])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum PendingReplyReason {
+  SETTING_OFF
+  NO_COMMENT_LOW_RATING
+  GBP_POST_FAILED
+}
+
+enum PendingReplyStatus {
+  PENDING
+  APPROVED
+  POST_FAILED
+  DISMISSED
+}
+
+enum ReviewReplyStatus {
+  NONE
+  PENDING_APPROVAL
+  AUTO_POSTED
+  APPROVED_POSTED
+}
+
+enum Role {
+  HQ
+  STORE_OWNER
+}
+
+enum StoreStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+}
+
+enum SurveyFlowMode {
+  LEGACY
+  LINE_FIRST
 }
