@@ -4,7 +4,6 @@ import {
   Image as ImageIcon,
   Settings,
   MessageSquare,
-  LogOut,
   Upload,
   Trash2,
   AlertTriangle,
@@ -306,18 +305,7 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userRole');
-    setToken(null);
-    setUserRole(null);
-    setCurrentShop(null);
-    setDashboard(null);
-    setSettings(null);
-    setPhotos([]);
-    setIsViewingShop(false);
-    setShopSearchQuery('');
-  };
+
 
   const handleSimulateRollover = async () => {
     if (!currentShop || !dashboard || isToggling) return;
@@ -720,13 +708,6 @@ export default function App() {
                 </p>
                 <p className="text-[9px] text-slate-400 font-bold mt-1 truncate max-w-[150px]">{currentShop.email}</p>
               </div>
-              <button
-                onClick={handleLogout}
-                className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                title="ログアウト"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
             </div>
           </div>
 
@@ -838,19 +819,12 @@ export default function App() {
           <img src="/logo_365.png" alt="365ボイス" className="h-7 w-auto object-contain" />
         </div>
         <div className="flex items-center gap-2.5">
-          <div className="hidden md:block text-right">
+          <div className="text-right">
             <p className="text-xs font-black text-slate-900 leading-tight">{currentShop.name}</p>
             <p className="text-[10px] text-slate-500 font-bold">
               {userRole === 'ADMIN' ? '👑 マスター管理者' : (userRole === 'AGENCY' ? '🏢 代理店管理者' : '店舗オーナー')}
             </p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-            title="ログアウト"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
         </div>
       </header>
 
