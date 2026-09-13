@@ -15,7 +15,7 @@ async function main() {
       data: {
         id: 'admin-seiha-uuid',
         name: '365ボイスシステム管理運営本部',
-        email: 'admin@365voice.com',
+        email: 'admin@365voice.jp',
         password: 'password',
         role: 'ADMIN',
         google_location_id: null,
@@ -23,7 +23,17 @@ async function main() {
         post_active: false,
       },
     });
-    console.log('👮 Created Admin User.');
+    console.log('👮 Created Admin User (admin@365voice.jp).');
+  } else {
+    await prisma.shop.update({
+      where: { id: 'admin-seiha-uuid' },
+      data: {
+        email: 'admin@365voice.jp',
+        password: 'password',
+        role: 'ADMIN',
+      }
+    });
+    console.log('👮 Updated Admin User to admin@365voice.jp.');
   }
 
   // Seeding Demo Agency X and Avenir Hair demo store
