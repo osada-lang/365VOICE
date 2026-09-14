@@ -40,6 +40,27 @@ function getGoogleAuthClient() {
   return oauth2Client;
 }
 
+// Helper to safely extract clean Google Drive folder ID even if a full URL is provided
+function extractGoogleDriveFolderId(input?: string | null): string {
+  if (!input) return 'root';
+  const trimmed = input.trim();
+  if (!trimmed) return 'root';
+  // Check if it's a full Google Drive URL like https://drive.google.com/drive/folders/15FBmez8x69TKX8jdwSJwhigPlf3OoLib...
+  const urlMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (urlMatch && urlMatch[1]) {
+    return urlMatch[1];
+  }
+  // Check if it's an id= query param like ...?id=15FBmez8x69TKX8jdwSJwhigPlf3OoLib
+  const queryMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (queryMatch && queryMatch[1]) {
+    return queryMatch[1];
+  }
+  // Check if it contains slashes, take the last segment
+  const segments = trimmed.split(/[\/\\]/);
+  const lastSegment = segments[segments.length - 1].trim();
+  return lastSegment || 'root';
+}
+
 // In-memory fallback mock drive files for when Google Drive credentials are not set up
 interface MockFile {
   id: string;
@@ -301,8 +322,9 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
     if (auth) {
       try {
         const drive = google.drive({ version: 'v3', auth });
+        const driveFolderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
         const driveRes = await drive.files.list({
-          q: `parents in '${shop.google_drive_folder_id || 'root'}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
+          q: `parents in '${driveFolderId}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
           fields: 'files(id, name)',
           pageSize: 1000,
         });
@@ -582,7 +604,7 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
     }
 
     const drive = google.drive({ version: 'v3', auth });
-    const folderId = shop.google_drive_folder_id || 'root';
+    const folderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
 
     console.log(`📂 Scanning Google Drive folder: ${folderId}...`);
     const driveRes = await drive.files.list({
@@ -608,7 +630,7 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
     console.error('❌ Failed to fetch Google Drive files:', error.message || error);
     
     if (auth && shop) {
-      const folderId = shop.google_drive_folder_id || 'root';
+      const folderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
       const errorMsg = error.message || '';
       const isFolderError = errorMsg.includes('File not found') || error.status === 404 || error.code === 404;
       const isPermissionError = errorMsg.toLowerCase().includes('permission') || error.status === 403 || error.code === 403;
@@ -729,7 +751,7 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
     }
 
     const drive = google.drive({ version: 'v3', auth });
-    const folderId = shop.google_drive_folder_id || 'root';
+    const folderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
 
     const bufferStream = new stream.PassThrough();
     bufferStream.end(fileBuffer);
@@ -767,7 +789,7 @@ app.post('/api/shops/:shopId/drive-images/upload', async (req, res) => {
     console.error('❌ Image upload error:', error.message || error);
     
     if (auth && shop) {
-      const folderId = shop.google_drive_folder_id || 'root';
+      const folderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
       const errorMsg = error.message || '';
       const isFolderError = errorMsg.includes('File not found') || error.status === 404 || error.code === 404;
       const isPermissionError = errorMsg.toLowerCase().includes('permission') || error.status === 403 || error.code === 403;
@@ -1044,11 +1066,12 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
 
     let driveFilesList: any[] = [];
     const auth = getGoogleAuthClient();
-    if (auth && shop.google_drive_folder_id) {
+    const driveFolderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
+    if (auth && driveFolderId !== 'root') {
       try {
         const drive = google.drive({ version: 'v3', auth });
         const driveRes = await drive.files.list({
-          q: `parents in '${shop.google_drive_folder_id}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
+          q: `parents in '${driveFolderId}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
           fields: 'files(id, name)',
           pageSize: 1000,
         });
@@ -1262,11 +1285,12 @@ async function executeDailyPostRollover(shopId: string) {
 
   let driveFilesList: any[] = [];
   const auth = getGoogleAuthClient();
-  if (auth && shop.google_drive_folder_id) {
+  const driveFolderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
+  if (auth && driveFolderId !== 'root') {
     try {
       const drive = google.drive({ version: 'v3', auth });
       const driveRes = await drive.files.list({
-        q: `parents in '${shop.google_drive_folder_id}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
+        q: `parents in '${driveFolderId}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
         fields: 'files(id, name)',
         pageSize: 1000,
       });
