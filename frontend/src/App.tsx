@@ -142,10 +142,10 @@ export default function App() {
       if (res.ok && data.redirectUrl) {
         window.location.href = data.redirectUrl;
       } else {
-        showBanner('error', data.error || '口コミ管理画面への移動に失敗しました。');
+        showBanner('error', data.error || '店舗管理画面への移動に失敗しました。');
       }
     } catch (err) {
-      showBanner('error', '通信エラー：口コミ管理画面へ接続できませんでした。');
+      showBanner('error', '通信エラー：店舗管理画面へ接続できませんでした。');
     } finally {
       setIsJumpingOut(false);
     }
@@ -1697,14 +1697,14 @@ export default function App() {
           onClick={handleJumpToReviews}
           disabled={isJumpingOut}
           className="flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all text-indigo-600 hover:text-indigo-800"
-          title="口コミ管理画面へ戻る"
+          title="店舗管理画面へ戻る"
         >
           {isJumpingOut ? (
             <RefreshCw className="w-5 h-5 animate-spin text-indigo-600" />
           ) : (
             <MessageSquare className="w-5 h-5 text-indigo-600" />
           )}
-          <span className="text-[9px] font-bold">口コミ画面へ</span>
+          <span className="text-[9px] font-bold">店舗管理画面へ</span>
         </button>
       </nav>
 
@@ -1794,7 +1794,7 @@ export default function App() {
             自動投稿＆キーワード設定
           </button>
 
-          {/* 🔗 Jump to Co-Developer's Reviews Dashboard */}
+          {/* 🔗 Jump to Co-Developer's Store Dashboard */}
           <div className="pt-2 border-t border-slate-100">
             <button
               type="button"
@@ -1804,7 +1804,7 @@ export default function App() {
             >
               <div className="flex items-center gap-2.5">
                 <MessageSquare className="w-4.5 h-4.5 text-indigo-600" />
-                <span>口コミ管理画面へ</span>
+                <span>店舗管理画面へ</span>
               </div>
               {isJumpingOut ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />

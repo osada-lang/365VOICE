@@ -241,7 +241,7 @@ app.post('/api/auth/magic-link-out', async (req, res) => {
     return res.json({ success: true, token, redirectUrl });
   } catch (err: any) {
     console.error('❌ Failed to generate magic link out:', err);
-    return res.status(500).json({ error: '口コミ画面へのジャンプURL生成に失敗しました。' });
+    return res.status(500).json({ error: '店舗管理画面へのジャンプURL生成に失敗しました。' });
   }
 });
 
