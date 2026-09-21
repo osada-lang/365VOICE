@@ -1189,10 +1189,40 @@ async function executeDailyPostRollover(shopId: string) {
     }
   }
 
-  const cleanDrafts = draftPostsArr.filter((d: any) => d.dayIndex !== -1);
+  let cleanDrafts = draftPostsArr.filter((d: any) => d.dayIndex !== -1);
 
   if (cleanDrafts.length === 0) {
-    throw new Error('下書きが存在しないため、自動生成処理を実行できません。先にダッシュボードで初期下書きを作成してください。');
+    console.log(`🤖 Auto-generating initial 3-day drafts for shop: ${shop.name}`);
+    let driveFilesList: any[] = [];
+    const auth = getGoogleAuthClient();
+    const driveFolderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
+    if (auth && driveFolderId !== 'root') {
+      try {
+        const drive = google.drive({ version: 'v3', auth });
+        const driveRes = await drive.files.list({
+          q: `parents in '${driveFolderId}' and (mimeType = 'image/jpeg' or mimeType = 'image/png' or mimeType = 'image/jpg') and trashed = false`,
+          fields: 'files(id, name)',
+          pageSize: 1000,
+        });
+        if (driveRes.data.files) {
+          driveFilesList = driveRes.data.files.map((f: any) => ({ id: f.id || '', name: f.name || '' }));
+        }
+      } catch (e) {}
+    }
+
+    try {
+      const day0 = await generateSingleDraft(shop, 0, driveFilesList);
+      const day1 = await generateSingleDraft(shop, 1, driveFilesList);
+      const day2 = await generateSingleDraft(shop, 2, driveFilesList);
+      cleanDrafts = [
+        { dayIndex: 0, title: '今日投稿予定の下書き (Day 0)', text: day0.text, subKeywords: day0.subKeywords, imageFileId: day0.imageFileId || null },
+        { dayIndex: 1, title: '明日投稿予定の下書き (Day 1)', text: day1.text, subKeywords: day1.subKeywords, imageFileId: day1.imageFileId || null },
+        { dayIndex: 2, title: '明後日投稿予定の下書き (Day 2)', text: day2.text, subKeywords: day2.subKeywords, imageFileId: day2.imageFileId || null }
+      ];
+    } catch (genErr) {
+      console.error('❌ Failed to auto-generate initial drafts during rollover:', genErr);
+      throw new Error('下書きが存在せず初期生成にも失敗したため、投稿処理を中断しました。');
+    }
   }
 
   const publishedPost = cleanDrafts[0];
@@ -1419,59 +1449,92 @@ async function resolveGoogleLocationPath(oauth2Client: any, locationIdInput: str
 const alreadyPostedToday = new Set<string>();
 
 // ==============================================================================
-// ⏱️ Background Automated Scheduler (Hourly execution check)
+// ⏱️ Background Automated Scheduler (Hourly execution check & auto-retry)
 // ==============================================================================
 async function runBackgroundScheduler() {
-  console.log(`\n⏰ [${new Date().toLocaleTimeString()}] Running 365ボイス background scheduler cycle...`);
+  const now = new Date();
+  
+  const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false
+  });
+  const parts = jstFormatter.formatToParts(now);
+  const year = parts.find(p => p.type === 'year')?.value;
+  const month = parts.find(p => p.type === 'month')?.value;
+  const day = parts.find(p => p.type === 'day')?.value;
+  const hour = parts.find(p => p.type === 'hour')?.value;
+
+  const todayStr = `${year}-${month}-${day}`;
+  const currentHour = parseInt(hour || '0', 10);
+
+  console.log(`\n⏰ [${todayStr} ${hour}:00 JST] 365ボイス バックグラウンド自動巡回サイクルを開始します...`);
+
+  if (currentHour === 0) {
+    alreadyPostedToday.clear();
+    console.log('🧹 [日付変更検知] 深夜0時(JST)を迎えたため、当日の投稿済みメモリキャッシュをクリアしました。');
+  }
 
   try {
+    // 稼働中（post_active: true）のすべての店舗を取得（roleに関わらず対象）
     const shops = await prisma.shop.findMany({
-      where: { role: 'OWNER' },
+      where: { post_active: true },
       include: { keywords: true },
     });
 
-    const now = new Date();
-    
-    const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
-      timeZone: 'Asia/Tokyo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      hour12: false
-    });
-    const parts = jstFormatter.formatToParts(now);
-    const year = parts.find(p => p.type === 'year')?.value;
-    const month = parts.find(p => p.type === 'month')?.value;
-    const day = parts.find(p => p.type === 'day')?.value;
-    const hour = parts.find(p => p.type === 'hour')?.value;
-
-    const todayStr = `${year}-${month}-${day}`;
-    const currentHour = parseInt(hour || '0', 10);
-
-    if (currentHour === 0) {
-      alreadyPostedToday.clear();
-      console.log('🧹 Midnight JST reached: Cleared scheduler memory set for the new day.');
-    }
+    console.log(`🔎 稼働中店舗数: ${shops.length}件 を確認`);
 
     for (const shop of shops) {
-      if (shop.post_active && shop.keywords) {
-        const postTimeHour = (shop.keywords as any).post_time_hour ?? 12;
+      if (!shop.keywords) {
+        console.log(`⏭️ 店舗「${shop.name}」: キーワード設定が存在しないためスキップします。`);
+        continue;
+      }
 
-        if (currentHour === postTimeHour) {
-          const memoryKey = `${shop.id}_${todayStr}`;
-          if (!alreadyPostedToday.has(memoryKey)) {
-            console.log(`⏱️ Daily post triggered for store: "${shop.name}" at ${postTimeHour}:00 (Current Hour: ${currentHour})`);
-            alreadyPostedToday.add(memoryKey);
+      const postTimeHour = (shop.keywords as any).post_time_hour ?? 12;
 
-            try {
-              await executeDailyPostRollover(shop.id);
-              console.log(`✅ Automatically completed daily post & slide for store: "${shop.name}"`);
-            } catch (postErr: any) {
-              console.error(`❌ Background daily post failed for store "${shop.name}":`, postErr.message || postErr);
+      // DB内の下書きから、本日既に投稿済み（Day -1 かつ publishedAt が本日）か判定
+      let isAlreadyPostedTodayInDb = false;
+      if (shop.keywords.draft_posts) {
+        try {
+          const drafts = JSON.parse(shop.keywords.draft_posts);
+          const postedItem = drafts.find((d: any) => d.dayIndex === -1);
+          if (postedItem && postedItem.publishedAt) {
+            const pubDateJst = jstFormatter.formatToParts(new Date(postedItem.publishedAt));
+            const pYear = pubDateJst.find(p => p.type === 'year')?.value;
+            const pMonth = pubDateJst.find(p => p.type === 'month')?.value;
+            const pDay = pubDateJst.find(p => p.type === 'day')?.value;
+            const pubDateStr = `${pYear}-${pMonth}-${pDay}`;
+            if (pubDateStr === todayStr) {
+              isAlreadyPostedTodayInDb = true;
             }
           }
+        } catch (e) {}
+      }
+
+      const memoryKey = `${shop.id}_${todayStr}`;
+
+      // 投稿タイミング判定：
+      // 設定時刻以降（currentHour >= postTimeHour）かつ 本日未投稿の場合に実行
+      if (currentHour >= postTimeHour) {
+        if (isAlreadyPostedTodayInDb || alreadyPostedToday.has(memoryKey)) {
+          console.log(`✓ 店舗「${shop.name}」: 本日分（${todayStr}）は既に投稿・ロールオーバー完了済みです。`);
+          alreadyPostedToday.add(memoryKey);
+          continue;
         }
+
+        console.log(`🚀 [自動投稿実行] 店舗「${shop.name}」: 設定時刻 ${postTimeHour}:00 (現在: ${currentHour}:00 JST) ➔ 投稿処理を開始します...`);
+        try {
+          await executeDailyPostRollover(shop.id);
+          alreadyPostedToday.add(memoryKey);
+          console.log(`✅ [自動投稿成功] 店舗「${shop.name}」の投稿＆下書きスライドが完了しました！`);
+        } catch (postErr: any) {
+          console.error(`❌ [自動投稿失敗] 店舗「${shop.name}」の投稿処理でエラーが発生しました（次回のCronで自動再試行します）:`, postErr.message || postErr);
+        }
+      } else {
+        console.log(`⏳ 店舗「${shop.name}」: 投稿予定時刻は ${postTimeHour}:00 です (現在: ${currentHour}:00 JST ➔ 待機中)`);
       }
     }
   } catch (err) {
