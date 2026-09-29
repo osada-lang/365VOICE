@@ -1259,68 +1259,89 @@ async function executeDailyPostRollover(shopId: string) {
       console.warn(`⚠️ [GBP安全遮断] 店舗「${shop.name}」: 本日の下書きはAI生成保留中のため、Googleマップへの一般公開を安全にスキップしました。`);
     } else {
       console.log(`📡 Attempting real GBP post creation for location: ${resolvedPath}`);
-      try {
-        const oauth2Client = new google.auth.OAuth2(clientID, clientSecret, 'http://localhost');
-        oauth2Client.setCredentials({ refresh_token: refreshToken });
-        
-        let mediaPayload = undefined;
-        if (publishedPost.imageFileId) {
-          const apiBaseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_API_BASE_URL || 'http://localhost:3000';
-          const sourceUrl = `${apiBaseUrl}/api/shops/${shopId}/drive-images/${publishedPost.imageFileId}/view`;
-          console.log(`📸 Attaching image to GBP post: ${sourceUrl}`);
-          mediaPayload = [
-            {
-              mediaFormat: 'PHOTO',
-              sourceUrl: sourceUrl,
-            }
-          ];
-        }
-
-        let finalPostText = publishedPost.text;
-        if (shop.keywords && shop.keywords.fixed_footer) {
-          finalPostText = `${finalPostText}\n\n━━━━━━━━━━━━━━━━\n${shop.keywords.fixed_footer}`;
-        }
-
-        let normalizedText = finalPostText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        normalizedText = normalizedText.replace(/\n{3,}/g, '\n\n');
-
-        const gbpPostText = normalizedText
-          .split('\n')
-          .map((line: string) => {
-            const trimmed = line.trim();
-            if (trimmed === '') {
-              return '　\u200B';
-            }
-            return trimmed;
-          })
-          .join('\n');
-
-        let callToActionPayload = undefined;
-        if (shop.keywords && shop.keywords.gbp_action_url) {
-          console.log(`🔗 Attaching Call-to-Action button to GBP post: ${shop.keywords.gbp_action_url}`);
-          callToActionPayload = {
-            actionType: 'LEARN_MORE',
-            url: shop.keywords.gbp_action_url
-          };
-        }
-
-        const response = await oauth2Client.request({
-          url: `https://mybusiness.googleapis.com/v4/${resolvedPath}/localPosts`,
-          method: 'POST',
-          data: {
-            languageCode: 'ja-JP',
-            summary: gbpPostText,
-            topicType: 'STANDARD',
-            ...(mediaPayload ? { media: mediaPayload } : {}),
-            ...(callToActionPayload ? { callToAction: callToActionPayload } : {})
+      const oauth2Client = new google.auth.OAuth2(clientID, clientSecret, 'http://localhost');
+      oauth2Client.setCredentials({ refresh_token: refreshToken });
+      
+      let mediaPayload = undefined;
+      if (publishedPost.imageFileId) {
+        const apiBaseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_API_BASE_URL || 'http://localhost:3000';
+        const sourceUrl = `${apiBaseUrl}/api/shops/${shopId}/drive-images/${publishedPost.imageFileId}/view`;
+        console.log(`📸 Attaching image to GBP post: ${sourceUrl}`);
+        mediaPayload = [
+          {
+            mediaFormat: 'PHOTO',
+            sourceUrl: sourceUrl,
           }
-        });
+        ];
+      }
 
-        gbpPublished = true;
-        gbpResponse = response.data;
-        console.log('✅ Successfully published real post to Google Business Profile!');
-      } catch (gbpError: any) {
-        console.error('⚠️ Real GBP publishing failed:', gbpError.message || gbpError);
+      let finalPostText = publishedPost.text;
+      if (shop.keywords && shop.keywords.fixed_footer) {
+        finalPostText = `${finalPostText}\n\n━━━━━━━━━━━━━━━━\n${shop.keywords.fixed_footer}`;
+      }
+
+      let normalizedText = finalPostText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      normalizedText = normalizedText.replace(/\n{3,}/g, '\n\n');
+
+      const gbpPostText = normalizedText
+        .split('\n')
+        .map((line: string) => {
+          const trimmed = line.trim();
+          if (trimmed === '') {
+            return '　\u200B';
+          }
+          return trimmed;
+        })
+        .join('\n');
+
+      let callToActionPayload = undefined;
+      if (shop.keywords && shop.keywords.gbp_action_url) {
+        console.log(`🔗 Attaching Call-to-Action button to GBP post: ${shop.keywords.gbp_action_url}`);
+        callToActionPayload = {
+          actionType: 'LEARN_MORE',
+          url: shop.keywords.gbp_action_url
+        };
+      }
+
+      let gbpSuccess = false;
+      let lastGbpError: any = null;
+
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          console.log(`📡 [GBP投稿 試行 ${attempt}/2] Location: ${resolvedPath}`);
+          const response = await oauth2Client.request({
+            url: `https://mybusiness.googleapis.com/v4/${resolvedPath}/localPosts`,
+            method: 'POST',
+            data: {
+              languageCode: 'ja-JP',
+              summary: gbpPostText,
+              topicType: 'STANDARD',
+              ...(mediaPayload ? { media: mediaPayload } : {}),
+              ...(callToActionPayload ? { callToAction: callToActionPayload } : {})
+            }
+          });
+
+          gbpPublished = true;
+          gbpResponse = response.data;
+          gbpSuccess = true;
+          console.log('✅ Successfully published real post to Google Business Profile!');
+          break;
+        } catch (gbpError: any) {
+          lastGbpError = gbpError;
+          console.error(`⚠️ [GBP投稿 試行 ${attempt}/2 失敗]:`, gbpError.message || gbpError);
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
+      }
+
+      if (!gbpSuccess) {
+        const isDemoStore = shop.name.includes('Avenir') || shop.name.includes('デモ') || (shop.google_location_id && shop.google_location_id.includes('demo'));
+        if (isDemoStore && (lastGbpError?.message?.includes('Requested entity was not found') || lastGbpError?.status === 404)) {
+          console.warn(`ℹ️ [デモ店舗判定] デモ用店舗のため、GBP実送信エラーを無視してシミュレーション投稿を継続します。`);
+        } else {
+          throw new Error(`Googleマップ(GBP)への投稿に失敗しました: ${lastGbpError?.message || lastGbpError}`);
+        }
       }
     }
   }
