@@ -1499,39 +1499,47 @@ async function resolveGoogleLocationPath(oauth2Client: any, locationIdInput: str
   return null;
 }
 
+// In-memory set to prevent double posting in the same hour & Mutex Lock to prevent overlapping runs
+let isSchedulerRunning = false;
 const alreadyPostedToday = new Set<string>();
 
 // ==============================================================================
 // ⏱️ Background Automated Scheduler (Hourly execution check & auto-retry)
 // ==============================================================================
 async function runBackgroundScheduler() {
-  const now = new Date();
-  
-  const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    hour12: false
-  });
-  const parts = jstFormatter.formatToParts(now);
-  const year = parts.find(p => p.type === 'year')?.value;
-  const month = parts.find(p => p.type === 'month')?.value;
-  const day = parts.find(p => p.type === 'day')?.value;
-  const hour = parts.find(p => p.type === 'hour')?.value;
-
-  const todayStr = `${year}-${month}-${day}`;
-  const currentHour = parseInt(hour || '0', 10);
-
-  console.log(`\n⏰ [${todayStr} ${hour}:00 JST] 365ボイス バックグラウンド自動巡回サイクルを開始します...`);
-
-  if (currentHour === 0) {
-    alreadyPostedToday.clear();
-    console.log('🧹 [日付変更検知] 深夜0時(JST)を迎えたため、当日の投稿済みメモリキャッシュをクリアしました。');
+  if (isSchedulerRunning) {
+    console.log('🔒 [排他制御ガード] 現在すでに自動巡回バッチが実行中です。二重投稿・並行実行を防ぐため今回のリクエストを安全にスキップしました。');
+    return;
   }
+  isSchedulerRunning = true;
 
   try {
+    const now = new Date();
+    
+    const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hour12: false
+    });
+    const parts = jstFormatter.formatToParts(now);
+    const year = parts.find(p => p.type === 'year')?.value;
+    const month = parts.find(p => p.type === 'month')?.value;
+    const day = parts.find(p => p.type === 'day')?.value;
+    const hour = parts.find(p => p.type === 'hour')?.value;
+
+    const todayStr = `${year}-${month}-${day}`;
+    const currentHour = parseInt(hour || '0', 10);
+
+    console.log(`\n⏰ [${todayStr} ${hour}:00 JST] 365ボイス バックグラウンド自動巡回サイクルを開始します...`);
+
+    if (currentHour === 0) {
+      alreadyPostedToday.clear();
+      console.log('🧹 [日付変更検知] 深夜0時(JST)を迎えたため、当日の投稿済みメモリキャッシュをクリアしました。');
+    }
+
     // 稼働中（post_active: true）のすべての店舗を取得（roleに関わらず対象）
     const shops = await prisma.shop.findMany({
       where: { post_active: true },
@@ -1579,12 +1587,15 @@ async function runBackgroundScheduler() {
         }
 
         console.log(`🚀 [自動投稿実行] 店舗「${shop.name}」: 設定時刻 ${postTimeHour}:00 (現在: ${currentHour}:00 JST) ➔ 投稿処理を開始します...`);
+        // 🛡️ Pre-lock memory key immediately before async communication begins!
+        alreadyPostedToday.add(memoryKey);
         try {
           await executeDailyPostRollover(shop.id);
-          alreadyPostedToday.add(memoryKey);
           console.log(`✅ [自動投稿成功] 店舗「${shop.name}」の投稿＆下書きスライドが完了しました！`);
         } catch (postErr: any) {
           console.error(`❌ [自動投稿失敗] 店舗「${shop.name}」の投稿処理でエラーが発生しました（次回のCronで自動再試行します）:`, postErr.message || postErr);
+          // Unlock only if rollover completely failed so future retry can happen
+          alreadyPostedToday.delete(memoryKey);
         }
       } else {
         console.log(`⏳ 店舗「${shop.name}」: 投稿予定時刻は ${postTimeHour}:00 です (現在: ${currentHour}:00 JST ➔ 待機中)`);
@@ -1592,6 +1603,8 @@ async function runBackgroundScheduler() {
     }
   } catch (err) {
     console.error('❌ Scheduler error:', err);
+  } finally {
+    isSchedulerRunning = false;
   }
 }
 
