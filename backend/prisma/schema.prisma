@@ -16,7 +16,7 @@ model Shop {
   agency_name            String?
   google_location_id     String?
   google_drive_folder_id String?
-  post_active            Boolean          @default(true)
+  post_active            Boolean          @default(false)
   created_at             DateTime         @default(now())
   updated_at             DateTime         @updatedAt
   magic_tokens           MagicLinkToken[]
@@ -36,7 +36,7 @@ model ShopKeywords {
   gurunavi_url   String?
   gbp_action_url String?
   draft_posts    String?
-  post_time_hour Int      @default(12)
+  post_time_hour Int      @default(9)
   updated_at     DateTime @updatedAt
   shop           Shop     @relation(fields: [shop_id], references: [id], onDelete: Cascade)
 }
