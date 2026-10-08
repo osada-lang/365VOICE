@@ -576,6 +576,24 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
       return res.status(404).json({ error: '店舗が見つかりませんでした。' });
     }
 
+    // Auto-sync GBP Location ID from Store table if currently missing on Shop
+    if (!shop.google_location_id) {
+      try {
+        const matchedStore: any[] = await prisma.$queryRawUnsafe(
+          'SELECT "gbpLocationId" FROM "Store" WHERE "voiceShopId" = $1 LIMIT 1',
+          shopId
+        );
+        if (matchedStore.length > 0 && matchedStore[0].gbpLocationId) {
+          shop.google_location_id = matchedStore[0].gbpLocationId.trim();
+          await prisma.shop.update({
+            where: { id: shopId },
+            data: { google_location_id: shop.google_location_id }
+          });
+          console.log(`📍 [Instant Synced GBP ID for ${shop.name}]: ${shop.google_location_id}`);
+        }
+      } catch (e) {}
+    }
+
     // Determine photo stock count
     let imageCount = mockDriveFiles.length;
     let firstFileId = mockDriveFiles.length > 0 ? mockDriveFiles[0].id : null;
@@ -1961,6 +1979,33 @@ async function syncKnownShopLocations() {
   }
 }
 
+// Helper to automatically sync gbpLocationId from co-developer's Store table to Shop.google_location_id
+async function syncStoreLocationIdsToShop() {
+  try {
+    const stores: any[] = await prisma.$queryRawUnsafe(
+      'SELECT id, name, "voiceShopId", "gbpLocationId" FROM "Store" WHERE "gbpLocationId" IS NOT NULL AND "voiceShopId" IS NOT NULL'
+    );
+    for (const store of stores) {
+      if (store.voiceShopId && store.gbpLocationId) {
+        const cleanLocationId = store.gbpLocationId.trim();
+        const shop = await prisma.shop.findUnique({
+          where: { id: store.voiceShopId },
+          select: { id: true, name: true, google_location_id: true }
+        });
+        if (shop && shop.google_location_id !== cleanLocationId) {
+          await prisma.shop.update({
+            where: { id: shop.id },
+            data: { google_location_id: cleanLocationId }
+          });
+          console.log(`📍 [Auto-Synced GBP ID] Store "${store.name}" -> Shop "${shop.name}": ${cleanLocationId}`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('⚠️ syncStoreLocationIdsToShop notice:', err.message || err);
+  }
+}
+
 // Start express server
 app.listen(port, () => {
   console.log(`\n================================================================================`);
@@ -1970,12 +2015,14 @@ app.listen(port, () => {
 
   // Run initial sync of known location IDs
   syncKnownShopLocations().catch(() => {});
+  syncStoreLocationIdsToShop().catch(() => {});
 
   console.log('⏱️ [Internal Scheduler] Initializing internal fallback scheduler (10-minute intervals)...');
   setInterval(async () => {
     console.log('⏰ [Internal Scheduler] Executing automatic background sync cycle...');
     try {
       await syncKnownShopLocations();
+      await syncStoreLocationIdsToShop();
       await runBackgroundScheduler();
       console.log('✅ [Internal Scheduler] Completed background sync cycle successfully.');
     } catch (err: any) {
@@ -1987,6 +2034,7 @@ app.listen(port, () => {
     console.log('⏰ [Internal Scheduler] Executing initial startup background sync...');
     try {
       await syncKnownShopLocations();
+      await syncStoreLocationIdsToShop();
       await runBackgroundScheduler();
       console.log('✅ [Internal Scheduler] Completed initial startup background sync.');
     } catch (err: any) {
