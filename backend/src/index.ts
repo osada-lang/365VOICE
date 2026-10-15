@@ -2071,14 +2071,18 @@ async function runBackgroundScheduler() {
         const startDateStr = `${sYear}-${sMonth}-${sDay}`;
 
         if (todayStr >= startDateStr) {
+          // 開始日を迎えたため、1回限りの自動昇格を実行し、post_start_dateをnullにクリア（手動OFFにした際に勝手に再ONになるのを完全に防止）
+          const updateData: any = { post_start_date: null };
           if (!shop.post_active) {
-            await prisma.shop.update({
-              where: { id: shop.id },
-              data: { post_active: true }
-            });
+            updateData.post_active = true;
             shop.post_active = true;
             console.log(`🚀 [開始予定日到達] 店舗「${shop.name}」: 投稿開始日（${startDateStr}）に到達したため、自動投稿をONに自動切り替えしました！`);
           }
+          await prisma.shop.update({
+            where: { id: shop.id },
+            data: updateData
+          });
+          shop.post_start_date = null;
         } else {
           console.log(`⏳ 店舗「${shop.name}」: 投稿開始日（${startDateStr}）前のため待機中（現在: ${todayStr} JST）`);
           continue;
