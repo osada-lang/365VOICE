@@ -50,6 +50,8 @@ interface DraftPost {
 interface DashboardData {
   shopName: string;
   postActive: boolean;
+  postStartDate?: string | null;
+  isWaitingForStartDate?: boolean;
   imageCount: number;
   totalImageCount?: number;
   invalidImageCount?: number;
@@ -82,6 +84,7 @@ interface SettingsData {
   shopId: string;
   shopName: string;
   postActive: boolean;
+  postStartDate?: string | null;
   keywords: {
     mainKeywords: string[];
     subKeywords: string[];
@@ -1015,11 +1018,21 @@ export default function App() {
               <div className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <span className="text-xs font-black text-slate-800 tracking-wider flex items-center gap-1.5 uppercase">
-                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                    <span className={`w-2.5 h-2.5 rounded-full ${
+                      dashboard.isWaitingForStartDate
+                        ? 'bg-amber-500 animate-pulse'
+                        : (dashboard.postActive ? 'bg-indigo-500 animate-pulse' : 'bg-slate-300')
+                    }`}></span>
                     本日の自動投稿ステータス
                   </span>
-                  <span className="text-[10px] font-black bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
-                    予約完了
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                    dashboard.isWaitingForStartDate && dashboard.postStartDate
+                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                      : (dashboard.postActive ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-500')
+                  }`}>
+                    {dashboard.isWaitingForStartDate && dashboard.postStartDate
+                      ? `⏳ ${dashboard.postStartDate} 開始予定`
+                      : (dashboard.postActive ? '予約完了' : '停止中')}
                   </span>
                 </div>
 
@@ -1610,6 +1623,24 @@ export default function App() {
                   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">
                     <Clock className="w-4 h-4 text-slate-400" />
                   </div>
+                </div>
+              </div>
+
+              {/* Scheduled Start Date */}
+              <div className="space-y-1.5 border-b border-slate-100/80 pb-4">
+                <label className="block text-[11px] font-black text-slate-400 tracking-wider uppercase">
+                  投稿開始予定日（予約開始設定）
+                </label>
+                <p className="text-[9px] text-slate-400 leading-normal font-bold">
+                  特定の日付から自動投稿をスタートしたい場合に設定します。未設定の場合は即時運用開始となります。
+                </p>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={settings.postStartDate || ''}
+                    onChange={(e) => setSettings({ ...settings, postStartDate: e.target.value || null })}
+                    className="block w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold bg-slate-50/50 text-slate-900 focus:outline-none focus:ring-2 focus:ring-brandBlue-500 cursor-pointer"
+                  />
                 </div>
               </div>
 

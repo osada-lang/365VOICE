@@ -17,6 +17,7 @@ model Shop {
   google_location_id     String?
   google_drive_folder_id String?
   post_active            Boolean          @default(false)
+  post_start_date        DateTime?        @db.Date
   created_at             DateTime         @default(now())
   updated_at             DateTime         @updatedAt
   magic_tokens           MagicLinkToken[]
