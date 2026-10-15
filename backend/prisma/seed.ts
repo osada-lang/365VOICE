@@ -16,7 +16,7 @@ async function main() {
         id: 'admin-seiha-uuid',
         name: '365ボイスシステム管理運営本部',
         email: 'admin@365voice.jp',
-        password: 'password',
+        password: 'silver-ringo-815-park',
         role: 'ADMIN',
         google_location_id: null,
         google_drive_folder_id: null,
@@ -29,7 +29,7 @@ async function main() {
       where: { id: 'admin-seiha-uuid' },
       data: {
         email: 'admin@365voice.jp',
-        password: 'password',
+        password: 'silver-ringo-815-park',
         role: 'ADMIN',
       }
     });
