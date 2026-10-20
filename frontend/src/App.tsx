@@ -37,6 +37,7 @@ interface ShopProfile {
   google_location_id: string | null;
   google_drive_folder_id: string | null;
   post_active?: boolean;
+  post_start_date?: string | null;
 }
 
 interface DraftPost {
@@ -405,6 +406,11 @@ export default function App() {
       });
 
       if (res.ok) {
+        setShopsList(prev => prev.map(s => s.id === currentShop.id ? {
+          ...s,
+          post_active: settings.postActive,
+          post_start_date: settings.postStartDate || null,
+        } : s));
         showBanner('success', '設定をデータベースに正常に保存しました！');
       } else {
         showBanner('error', '設定の保存に失敗しました。');
@@ -863,7 +869,12 @@ export default function App() {
                                 <h3 className="text-xs font-black text-slate-900">{shop.name}</h3>
                                 <p className="text-[10px] text-slate-400 font-bold">{shop.email}</p>
                               </div>
-                              <div className="flex items-center gap-3 self-end sm:self-auto">
+                              <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
+                                {!shop.post_active && shop.post_start_date && (
+                                  <span className="text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
+                                    ⏳ {new Date(shop.post_start_date).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' })} 開始予定
+                                  </span>
+                                )}
                                 <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
                                   shop.post_active ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-slate-100 text-slate-500 border border-slate-200'
                                 }`}>
