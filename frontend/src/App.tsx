@@ -1661,24 +1661,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Scheduled Start Date */}
-              <div className="space-y-1.5 border-b border-slate-100/80 pb-4">
-                <label className="block text-[11px] font-black text-slate-400 tracking-wider uppercase">
-                  投稿開始予定日（予約開始設定）
-                </label>
-                <p className="text-[9px] text-slate-400 leading-normal font-bold">
-                  特定の日付から自動投稿をスタートしたい場合に設定します。未設定の場合は即時運用開始となります。
-                </p>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={settings.postStartDate || ''}
-                    onChange={(e) => setSettings({ ...settings, postStartDate: e.target.value || null })}
-                    className="block w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold bg-slate-50/50 text-slate-900 focus:outline-none focus:ring-2 focus:ring-brandBlue-500 cursor-pointer"
-                  />
-                </div>
-              </div>
-
               {/* Main Keywords */}
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-black text-slate-400 tracking-wider uppercase">
