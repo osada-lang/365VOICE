@@ -430,6 +430,82 @@ async function fetchDriveFilesWithSubfolders(auth: any, rawFolderId: string): Pr
   }
 }
 
+// 🛡️ Helper to retrieve logically excluded image IDs for a shop (stored safely in draft_posts metadata without modifying DB schema)
+async function getExcludedImageIds(shopId: string): Promise<string[]> {
+  try {
+    const shopKeywords = await prisma.shopKeywords.findUnique({
+      where: { shop_id: shopId },
+      select: { draft_posts: true }
+    });
+    if (!shopKeywords?.draft_posts) return [];
+    const drafts = JSON.parse(shopKeywords.draft_posts);
+    if (!Array.isArray(drafts)) return [];
+    const meta = drafts.find((d: any) => d && d.dayIndex === -999);
+    return Array.isArray(meta?.excludedImageIds) ? meta.excludedImageIds : [];
+  } catch {
+    return [];
+  }
+}
+
+// 🛡️ Helper to add an image ID to a shop's logical exclusion list
+async function addExcludedImageId(shopId: string, fileId: string): Promise<void> {
+  try {
+    const shopKeywords = await prisma.shopKeywords.findUnique({
+      where: { shop_id: shopId }
+    });
+    if (!shopKeywords) return;
+    let drafts: any[] = [];
+    try {
+      drafts = JSON.parse(shopKeywords.draft_posts || '[]');
+      if (!Array.isArray(drafts)) drafts = [];
+    } catch {
+      drafts = [];
+    }
+
+    let meta = drafts.find((d: any) => d && d.dayIndex === -999);
+    if (!meta) {
+      meta = { dayIndex: -999, excludedImageIds: [] };
+      drafts.push(meta);
+    }
+    if (!Array.isArray(meta.excludedImageIds)) {
+      meta.excludedImageIds = [];
+    }
+    if (!meta.excludedImageIds.includes(fileId)) {
+      meta.excludedImageIds.push(fileId);
+    }
+
+    await prisma.shopKeywords.update({
+      where: { shop_id: shopId },
+      data: { draft_posts: JSON.stringify(drafts) }
+    });
+  } catch (err: any) {
+    console.error('❌ Failed to add excluded image ID:', err.message || err);
+  }
+}
+
+// 🛡️ Helper to preserve -999 metadata when updating draft_posts
+function preserveDraftMeta(newDrafts: any[], existingDraftPostsJson?: string | null): any[] {
+  if (!existingDraftPostsJson) return newDrafts;
+  try {
+    const existing = JSON.parse(existingDraftPostsJson);
+    if (!Array.isArray(existing)) return newDrafts;
+    const meta = existing.find((d: any) => d && d.dayIndex === -999);
+    if (meta) {
+      const cleanNew = newDrafts.filter((d: any) => d && d.dayIndex !== -999);
+      return [...cleanNew, meta];
+    }
+  } catch {}
+  return newDrafts;
+}
+
+// 🛡️ Helper to fetch drive files for a shop, automatically filtering out logically excluded images
+async function fetchDriveFilesForShop(auth: any, shopId: string, rawFolderId: string): Promise<DriveFileItem[]> {
+  const allFiles = await fetchDriveFilesWithSubfolders(auth, rawFolderId);
+  const excludedIds = await getExcludedImageIds(shopId);
+  if (excludedIds.length === 0) return allFiles;
+  return allFiles.filter(f => !excludedIds.includes(f.id));
+}
+
 interface GbpLocationDetails {
   title?: string;
   categoryName?: string;
@@ -651,7 +727,7 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
     const auth = getGoogleAuthClient();
     if (auth && shop.google_drive_folder_id) {
       try {
-        const liveFiles = await fetchDriveFilesWithSubfolders(auth, shop.google_drive_folder_id);
+        const liveFiles = await fetchDriveFilesForShop(auth, shopId, shop.google_drive_folder_id);
         if (liveFiles.length > 0) {
           driveFilesList = liveFiles;
         } else {
@@ -766,12 +842,15 @@ app.get('/api/shops/:shopId/dashboard', async (req, res) => {
       }
     }
 
-    const resolvedDrafts = draftPostsArr.map((d: any) => {
-      return {
-        ...d,
-        imageFileId: d.imageFileId || null
-      };
-    });
+    // Resolve draft posts strictly using database-stored image assignments (excluding internal metadata such as -999)
+    const resolvedDrafts = draftPostsArr
+      .filter((d: any) => d && typeof d.dayIndex === 'number' && d.dayIndex >= -1 && d.dayIndex <= 2)
+      .map((d: any) => {
+        return {
+          ...d,
+          imageFileId: d.imageFileId || null
+        };
+      });
 
     const day0Draft = resolvedDrafts.find((d: any) => d.dayIndex === 0);
     const day0ImageFileId = day0Draft ? day0Draft.imageFileId : null;
@@ -1032,7 +1111,7 @@ app.get('/api/shops/:shopId/drive-images', async (req, res) => {
     const folderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
 
     console.log(`📂 Scanning Google Drive folder and subfolders: ${folderId}...`);
-    const files = await fetchDriveFilesWithSubfolders(auth, folderId);
+    const files = await fetchDriveFilesForShop(auth, shopId, folderId);
 
     return res.json({ files, isMock: false });
   } catch (error: any) {
@@ -1317,64 +1396,29 @@ app.delete('/api/shops/:shopId/drive-images/:fileId', async (req, res) => {
 
   try {
     const shop = await prisma.shop.findUnique({ where: { id: shopId } });
-    const auth = getGoogleAuthClient();
 
     if (!shop) {
       return res.status(404).json({ error: '店舗が見つかりませんでした。' });
     }
 
-    if (!auth || fileId.startsWith('mock-')) {
+    if (fileId.startsWith('mock-')) {
       mockDriveFiles = mockDriveFiles.filter((f) => f.id !== fileId);
       console.log(`🟢 [モック削除成功] ID: ${fileId} がストックから削除されました。`);
       return res.json({ success: true, fileId, isMock: true });
     }
 
-    const drive = google.drive({ version: 'v3', auth });
-    console.log(`🗑️ Deleting file with ID: ${fileId} from Google Drive...`);
+    // 🛡️ 365VOICE 論理除外方式：
+    // Google Driveのファイル削除や removeParents は一切実行せず、
+    // 除外リスト（ShopKeywords.draft_posts メタデータ内）に登録して画面・自動投稿から完全除外します。
+    // （これにより、Googleドライブ上の共有フォルダにはファイルが安全にそのまま残り、
+    // 店舗オーナー様のドライブ内に「住所不定の親なしファイル」が蓄積される問題を100%根本防止します）
+    await addExcludedImageId(shopId, fileId);
+    console.log(`🗑️ [論理除外成功] 店舗「${shop.name}」の画像ID「${fileId}」を除外リストに登録しました（Googleドライブはそのまま維持）。`);
 
-    try {
-      await drive.files.delete({ fileId, supportsAllDrives: true });
-      return res.json({ success: true, fileId, isMock: false });
-    } catch (deleteError: any) {
-      console.warn(`⚠️ files.delete failed (likely non-owned file). Attempting removeParents fallback:`, deleteError.message || deleteError);
-
-      // Fetch file's current parents to unlink it from the shop's folder hierarchy
-      const fileMeta = await drive.files.get({
-        fileId,
-        fields: 'id, parents',
-        supportsAllDrives: true,
-      });
-
-      const parents: string[] = fileMeta.data.parents || [];
-      const shopFolderId = extractGoogleDriveFolderId(shop.google_drive_folder_id);
-
-      let parentsToRemove = '';
-      if (shopFolderId && parents.includes(shopFolderId)) {
-        parentsToRemove = shopFolderId;
-      } else if (parents.length > 0) {
-        parentsToRemove = parents.join(',');
-      }
-
-      if (parentsToRemove) {
-        await drive.files.update({
-          fileId,
-          removeParents: parentsToRemove,
-          supportsAllDrives: true,
-          fields: 'id, parents',
-        });
-        console.log(`✅ [フォールバック除外成功] ファイルID: ${fileId} を親フォルダ [${parentsToRemove}] から安全に除外解除しました。`);
-        return res.json({ success: true, fileId, isMock: false, unlinkedOnly: true });
-      }
-
-      throw deleteError;
-    }
+    return res.json({ success: true, fileId, isMock: false, logicallyExcluded: true });
   } catch (error: any) {
-    console.error('❌ Image deletion error:', error.message || error);
-    const isPermissionError = error.message?.toLowerCase().includes('permission') || error.status === 403 || error.code === 403;
-    const errorMsg = isPermissionError
-      ? 'この画像は別のGoogleアカウントが所有しており、フォルダからの除外も行えませんでした。Googleドライブから直接削除してください。'
-      : 'Google Driveからの画像削除に失敗しました。';
-    return res.status(isPermissionError ? 403 : 500).json({ error: errorMsg });
+    console.error('❌ Image exclusion error:', error.message || error);
+    return res.status(500).json({ error: '画像の削除（除外）に失敗しました。' });
   }
 });
 
@@ -1542,7 +1586,8 @@ export async function generateSingleDraft(
   let imageFileId: string | null = null;
   const selectedSubKeywords: string[] = [];
 
-  const validDriveFiles = (driveFiles || []).filter(f => f.isValidForGbp !== false);
+  const excludedIds = await getExcludedImageIds(shop.id);
+  const validDriveFiles = (driveFiles || []).filter(f => f.isValidForGbp !== false && !excludedIds.includes(f.id));
   const imageCount = validDriveFiles.length;
   const isAlternating = imageCount >= 1 && imageCount < 10;
   const shouldBeTextOnly = forceTextOnly || (isAlternating && dayIndex % 2 === 1);
@@ -1904,10 +1949,17 @@ app.post('/api/shops/:shopId/draft-posts', async (req, res) => {
   const { drafts } = req.body;
 
   try {
+    const shopKeywords = await prisma.shopKeywords.findUnique({
+      where: { shop_id: shopId },
+      select: { draft_posts: true }
+    });
+
+    const nextDrafts = preserveDraftMeta(drafts || [], shopKeywords?.draft_posts);
+
     await prisma.shopKeywords.update({
       where: { shop_id: shopId },
       data: {
-        draft_posts: JSON.stringify(drafts),
+        draft_posts: JSON.stringify(nextDrafts),
       }
     });
 
@@ -1942,11 +1994,11 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
       draftPostsArr = JSON.parse(shop.keywords.draft_posts);
     }
 
-    // Fetch Drive files with subfolders for intelligent keyword-folder matching
+    // Fetch Drive files with subfolders for intelligent keyword-folder matching (excluding logically deleted images)
     let driveFilesList: DriveFileItem[] = [];
     const auth = getGoogleAuthClient();
     if (auth && shop.google_drive_folder_id) {
-      driveFilesList = await fetchDriveFilesWithSubfolders(auth, shop.google_drive_folder_id);
+      driveFilesList = await fetchDriveFilesForShop(auth, shop.id, shop.google_drive_folder_id);
     }
 
     const isTodayPublished = draftPostsArr.some((d: any) => d.dayIndex === -1);
@@ -2001,14 +2053,16 @@ app.post('/api/shops/:shopId/draft-posts/regenerate', async (req, res) => {
 
     draftPostsArr.sort((a: any, b: any) => a.dayIndex - b.dayIndex);
 
+    // Save to database, preserving exclusion metadata
+    const nextDraftsToSave = preserveDraftMeta(draftPostsArr, shop.keywords?.draft_posts);
     await prisma.shopKeywords.update({
       where: { shop_id: shopId },
       data: {
-        draft_posts: JSON.stringify(draftPostsArr),
+        draft_posts: JSON.stringify(nextDraftsToSave),
       }
     });
 
-    return res.json({ success: true, drafts: draftPostsArr });
+    return res.json({ success: true, drafts: draftPostsArr.filter((d: any) => d && d.dayIndex !== -999) });
   } catch (error: any) {
     console.error('❌ Draft regenerate error:', error);
     return res.status(500).json({ error: error.message || 'AI下書きの再生成に失敗しました。' });
@@ -2270,11 +2324,11 @@ async function executeDailyPostRollover(shopId: string) {
     }
   }
 
-  // Fetch Drive files with subfolders for intelligent keyword-folder matching
+  // Fetch Drive files with subfolders for intelligent keyword-folder matching (excluding logically deleted images)
   let driveFilesList: DriveFileItem[] = [];
   const auth = getGoogleAuthClient();
   if (auth && shop.google_drive_folder_id) {
-    driveFilesList = await fetchDriveFilesWithSubfolders(auth, shop.google_drive_folder_id);
+    driveFilesList = await fetchDriveFilesForShop(auth, shop.id, shop.google_drive_folder_id);
   }
 
   const nextDayMinus1 = {
@@ -2343,11 +2397,12 @@ async function executeDailyPostRollover(shopId: string) {
   }
 
   const newDrafts = [nextDayMinus1, nextDay0, nextDay1, nextDay2];
+  const preservedDrafts = preserveDraftMeta(newDrafts, shop.keywords?.draft_posts);
 
   await prisma.shopKeywords.update({
     where: { shop_id: shopId },
     data: {
-      draft_posts: JSON.stringify(newDrafts)
+      draft_posts: JSON.stringify(preservedDrafts)
     }
   });
 
